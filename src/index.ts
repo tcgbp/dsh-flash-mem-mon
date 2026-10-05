@@ -42,6 +42,22 @@ const DEFAULT_GC_THRESHOLD_INFO = 2
 const DEFAULT_GC_THRESHOLD_WARNING = 5
 const DEFAULT_GC_THRESHOLD_ERROR = 10
 
+// V8 GC entry `kind` is a bitmask of GC types:
+//   1 << 0 = Scavenge (minor / young-gen)
+//   1 << 1 = MarkSweepCompact (major / full)
+//   1 << 2 = IncrementalMarking
+//   1 << 3 = ProcessWeakCallbacks
+// In practice modern V8/Node reports a full MarkSweepCompact cycle through the
+// IncrementalMarking (4) and ProcessWeakCallbacks (8) phases — the standalone
+// "major" bit (2) is almost never emitted on its own.  Classifying Full GC by
+// `kind === 2` alone therefore misses (nearly) every real full collection.
+// The robust test: a Full GC is any NON-scavenge cycle, i.e. the Scavenge bit
+// (1) is NOT set.  This captures 2, 4, 6, 8, 10, 12, 14 while excluding minor
+// (1) scavenges.
+function isFullGc(kind: number): boolean {
+  return (kind & 1) === 0 && kind > 0
+}
+
 /** Resolved volatile config — each field is a live reference read with .get(). */
 export interface MemMonConfig {
   memThresholdInfo: Volatile<number>
@@ -177,26 +193,18 @@ class MemoryTrendCollector {
     return this._samples.filter(s => s.ts >= since)
   }
 
-  /** Return recent GC events (last ~5 min) for chart rendering.
-   *  Pass since=0 to return ALL stored events (for full-mode fetches). */
+  /** Return Full (major) GC events for chart rendering.
+   *  Pass since=0 to return ALL stored events (for full-mode fetches).
+   *  Each returned event is one real full-GC cycle (phases already coalesced
+   *  in `_startGcObserver`) and is normalized to kind=2 so the client can
+   *  always treat `gcEvents` as "Full GC events". */
   gcEvents(since?: number): Array<{ ts: number; kind: number; duration: number }> {
-    if (this._gcEvents.length === 0 && this._gcMajorEvents.length === 0) return []
+    if (this._gcMajorEvents.length === 0) return []
     const cutoff = since ?? (Date.now() - 5 * 60 * 1000)
-    // Merge the general ring buffer with the dedicated major-GC buffer
-    const all = this._gcEvents.concat(this._gcMajorEvents)
-    // Deduplicate by (ts, kind) — major events that also appear in the general buffer
-    const seen = new Set<string>()
-    const result: Array<{ ts: number; kind: number; duration: number }> = []
-    for (const e of all) {
-      if (e.ts < cutoff) continue
-      const key = e.ts + '|' + e.kind + '|' + e.duration
-      if (seen.has(key)) continue
-      seen.add(key)
-      result.push(e)
-    }
-    // Sort by timestamp for consistent rendering
-    result.sort((a, b) => a.ts - b.ts)
-    return result
+    return this._gcMajorEvents
+      .filter(e => e.ts >= cutoff)
+      .map(e => ({ ts: e.ts, kind: 2, duration: e.duration }))
+      .sort((a, b) => a.ts - b.ts)
   }
 
   summary(since?: number): MemoryTrendSummary {
@@ -257,18 +265,23 @@ class MemoryTrendCollector {
 
   /** Aggregate GC events in the last `windowMs` milliseconds. */
   private _gcSummary(windowMs: number): GcStats | null {
-    if (this._gcEvents.length === 0) return null
+    if (this._gcEvents.length === 0 && this._gcMajorEvents.length === 0) return null
     const cutoff = Date.now() - windowMs
-    const recent = this._gcEvents.filter(e => e.ts >= cutoff)
-    if (recent.length === 0) return null
 
-    let minorCount = 0, majorCount = 0, gcPauseMs = 0
-    for (const e of recent) {
+    // Major (Full) count comes from the coalesced major-GC buffer so each
+    // real cycle counts once (not once per phase entry).
+    const majorRecent = this._gcMajorEvents.filter(e => e.ts >= cutoff)
+    const majorCount = majorRecent.length
+
+    // Minor count + total pause come from the general ring buffer (which holds
+    // every event).  A minor cycle is a Scavenge (kind bit 1 set).
+    let minorCount = 0, gcPauseMs = 0
+    for (const e of this._gcEvents) {
+      if (e.ts < cutoff) continue
       gcPauseMs += e.duration
-      if (e.kind === 2) majorCount++       // kind=2 → major (MarkSweep/MarkCompact)
-      else if (e.kind === 1) minorCount++   // kind=1 → minor (Scavenge)
-      // kind=4 (incremental marking), kind=8 (weak callbacks) — counted in pause but not as cycles
+      if ((e.kind & 1) !== 0) minorCount++
     }
+    if (majorCount === 0 && minorCount === 0 && gcPauseMs === 0) return null
 
     const windowMin = windowMs / 60000
     return {
@@ -288,15 +301,27 @@ class MemoryTrendCollector {
       const { PerformanceObserver } = await import('perf_hooks')
       this._gcObserver = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
-          // GC entry kinds: 1=minor, 2=major, 4=incremental, 8=weak callbacks
+          // GC entry kinds form a bitmask (see isFullGc): 1=Scavenge(minor),
+          // 2/4/8 = MarkSweepCompact/IncrementalMarking/ProcessWeakCallbacks.
+          // A single real Full GC is usually reported as several phase entries
+          // (e.g. kind 4 + kind 8) within a few ms, so we coalesce them into
+          // one Full GC event below.
           const kind = (entry as any).kind ?? 0
           const event = { ts: Date.now(), kind, duration: entry.duration }
           this._gcEvents.push(event)
-          // Also store major (Full) GC events in a separate long-lived buffer,
+          // Also store full (major) GC events in a separate long-lived buffer,
           // because they are rare and the general ring buffer may evict them.
-          if (kind === 2) {
-            this._gcMajorEvents.push(event)
-            while (this._gcMajorEvents.length > this._gcMajorEventsCap) this._gcMajorEvents.shift()
+          if (isFullGc(kind)) {
+            const last = this._gcMajorEvents[this._gcMajorEvents.length - 1]
+            if (last && event.ts - last.ts < 500) {
+              // Same full-GC cycle (phase entries arriving back-to-back):
+              // merge into the existing event, keeping the worst-case pause.
+              last.duration = Math.max(last.duration, event.duration)
+              last.ts = event.ts
+            } else {
+              this._gcMajorEvents.push(event)
+              while (this._gcMajorEvents.length > this._gcMajorEventsCap) this._gcMajorEvents.shift()
+            }
           }
         }
         // Cap the ring buffer.
@@ -429,11 +454,11 @@ export function apply(ctx: Context, config: MemMonConfig) {
           // gcEvents(undefined) → cutoff=now-5min → only recent events.
           // The sparkline may span hours, so we need the full range.
           const gcSince = since > 0 ? since : 0
-          // Only return major (Full) GC events to the client — minor GC
-          // is too frequent and clutters the chart.  Minor GC stats are
+          // Only return full (major) GC events to the client — minor GC is too
+          // frequent and clutters the chart.  These are already coalesced into
+          // one event per real cycle by `_startGcObserver`.  Minor GC stats are
           // still available via mode=summary (majorPerMin, gcPausePerMin).
-          const allGcEvents = _memoryTrend.gcEvents(gcSince)
-          const majorGcEvents = allGcEvents.filter(e => e.kind === 2)
+          const majorGcEvents = _memoryTrend.gcEvents(gcSince)
           sendJson(res, 200, {
             samples: _memoryTrend.query(since || undefined),
             gcEvents: majorGcEvents,
