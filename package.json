@@ -1,6 +1,6 @@
 {
   "name": "dsh-flash-mem-mon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Memory monitor provider for dock-flash — registers a host-memory-alert provider (RSS absolute, RSS growth rate, Major GC frequency) via ctx.get('dockFlashAlerts') and exposes /memory-trend for trend sparklines.",
   "license": "Apache-2.0",
   "type": "module",
