@@ -1,0 +1,53 @@
+# dsh-market submission entry for dsh-flash-mem-mon.
+#
+# To submit: copy this file to
+#   <your-fork-of-awesome-dsh-plugin>/data/plugins/tcgbp__dsh-flash-mem-mon.yml
+# and open a PR against https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.
+# After it is merged, update it here rather than in a second place.
+#
+# Rules enforced by the registry's own scripts/lib/entries.mjs::validateEntries
+# (read from the registry on 2026-10-06) and by contributing.md:
+#   - only these keys: url, name, category, description, tarball
+#     (no `npm:` key — the npm mapping is resolved from the repository)
+#   - filename must equal slugFor(url): <owner>__<repo>.yml
+#   - `name` is the link text, so an owner/repo name must match `url`
+#   - category must be one of the registry's CAT_IDS
+#   - description.en is required and single-line; description.zh is optional
+#   - a description containing ": " must be quoted, or YAML parses it as a
+#     nested mapping key
+#   - tarball must be https on GitHub release hosting and end in .tgz/.tar.gz
+#
+# Category: `memory`. This one is not a near miss — the registry has a `memory`
+# category and the plugin's entire subject is host memory and GC pressure.
+# CAT_IDS seen 2026-10-06: agi, ui, usage, theme, model, identity, session, memory,
+# tools, wsl, browser, vision, voice, docs, skill, workflow, git, notify, dev,
+# security, remote, market, fun.
+#
+# The tarball is deliberately the version-free releases/latest/download/ URL with a
+# version-free asset name. `latest` is resolved per request but the filename is taken
+# literally, so an asset named dsh-flash-mem-mon-<version>.tgz would 404 on the next
+# release: keep the asset named dsh-flash-mem-mon.tgz and publishing a new Release
+# moves this URL by itself, with no entry edit and no pull request per release.
+#
+# It is also the FALLBACK. Measured 2026-10: dsh-market's installTargetFor() resolves
+# the catalog's npm name FIRST (entry.npm), then this Release tarball, then
+# `github:<owner>/<repo>`. The registry resolves that npm mapping from the PUBLISHED
+# package's own `repository` field, which this package now declares.
+#
+# Submission state, checked 2026-10-06:
+#   * The GitHub mirror exists (tcgbp/dsh-flash-mem-mon), public, default branch master,
+#     and carries the required `dsh-plugin` topic.
+#   * A Release exists whose asset name matches the URL below, so the entry's own link
+#     resolves; the URL is version-free, so later Releases keep it correct.
+#   * The registry's repo-age gate wants a repository at least 1 day old. This mirror was
+#     created 2026-10-06, so a PR opened immediately may be rejected on age — the gate
+#     re-runs itself every 6 hours, and such a PR turns green on its own.
+#   * The npm package `dsh-flash-mem-mon` is published, so the catalog's npm mapping can
+#     resolve and users get the registry spec rather than this tarball.
+url: https://github.com/tcgbp/dsh-flash-mem-mon
+name: tcgbp/dsh-flash-mem-mon
+category: memory
+description:
+  en: 'Memory and GC monitor for dock-flash: registers a host-memory-alert provider through the dockFlashAlerts service and its own switch through quickControl, reporting resident memory, memory growth rate and Major GC frequency, with its own settings namespace and a trend endpoint for sparklines.'
+  zh: 'dock-flash 的内存与 GC 监控插件：通过 dockFlashAlerts 注册宿主内存告警提供者、通过 quickControl 注册自己的开关，报告常驻内存、内存增长率与 Major GC 频率；拥有独立的设置命名空间，并提供趋势接口用于火花线。'
+tarball: https://github.com/tcgbp/dsh-flash-mem-mon/releases/latest/download/dsh-flash-mem-mon.tgz
