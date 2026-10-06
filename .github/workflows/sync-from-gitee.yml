@@ -1,0 +1,117 @@
+# Gitee → GitHub mirror sync.
+#
+# The source of truth for this repository is Gitee:
+#   https://gitee.com/lenin.guo/dsh-flash-mem-mon
+# This workflow mirrors every branch and tag from there onto GitHub:
+#   https://github.com/tcgbp/dsh-flash-mem-mon
+#
+# Notes:
+# - `schedule` triggers only run from the repository's DEFAULT branch, so this
+#   file has to land on `master` for the cron to fire at all.
+# - The Gitee repository is public, so no Secret is required: it is cloned
+#   anonymously over https, and Gitee is never pushed to.
+# - Pushing to GitHub uses the built-in GITHUB_TOKEN (contents: write). If the
+#   organization restricts the default workflow permissions, allow "Read and
+#   write permissions" for this repository.
+# - Gitee history wins: branches are force-pushed, so a GitHub-only commit on a
+#   branch that also exists on Gitee is overwritten. Do not merge on GitHub.
+# - Stale branches and tags are deleted only on a manual dispatch with
+#   `delete_stale_branches` checked; scheduled runs never delete anything.
+# - Commits pushed with GITHUB_TOKEN do not start other workflows (GitHub
+#   suppresses recursive runs), so mirrored commits trigger no CI here.
+# - A branch-protection rule that requires pull requests on `master` will reject
+#   the push; relax it for this workflow or the force-push fails.
+
+name: Sync from Gitee
+
+on:
+  schedule:
+    # Times are UTC. 17 */6 → 01:17 / 07:17 / 13:17 / 19:17 Beijing time.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      delete_stale_branches:
+        description: 'Also delete GitHub branches and tags that no longer exist on Gitee'
+        type: boolean
+        default: false
+
+# One sync at a time: two concurrent force-pushes would race each other.
+concurrency:
+  group: sync-from-gitee
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GITEE_REPO: https://gitee.com/lenin.guo/dsh-flash-mem-mon.git
+
+jobs:
+  mirror:
+    name: Mirror Gitee → GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the GitHub repository
+        uses: actions/checkout@v4
+        with:
+          # Full history for every branch, and keep the token on `origin` so
+          # the push steps below are authenticated.
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Fetch branches and tags from Gitee
+        run: |
+          set -euo pipefail
+          git remote remove gitee 2>/dev/null || true
+          git remote add gitee "$GITEE_REPO"
+          # --prune drops the remote-tracking refs of branches Gitee deleted.
+          git fetch --prune --no-recurse-submodules gitee \
+            '+refs/heads/*:refs/remotes/gitee/*' \
+            '+refs/tags/*:refs/tags/*'
+          echo 'Branches on Gitee:'
+          git for-each-ref --format='  %(refname:lstrip=3)  %(objectname:short)' refs/remotes/gitee
+
+      - name: Push branches to GitHub
+        run: |
+          set -euo pipefail
+          # One push per branch rather than `git push --mirror`: --mirror also
+          # tries to delete GitHub's read-only refs/pull/* and fails the run.
+          while read -r branch; do
+            [ -n "$branch" ] || continue
+            echo "→ $branch"
+            git push --force origin "refs/remotes/gitee/$branch:refs/heads/$branch"
+          done < <(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/gitee)
+
+      - name: Push tags to GitHub
+        run: |
+          set -euo pipefail
+          # --force so a tag rewritten on Gitee replaces the GitHub one.
+          git push --force --tags origin
+
+      - name: Delete branches and tags that no longer exist on Gitee
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_stale_branches }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # Compare the two remotes directly: the local clone holds refs fetched
+          # from GitHub, so it cannot tell what Gitee still has.
+          while read -r branch; do
+            [ -n "$branch" ] || continue
+            if [ "$branch" = "$DEFAULT_BRANCH" ]; then
+              echo "! keeping the default branch $branch"
+              continue
+            fi
+            echo "✗ deleting branch $branch"
+            git push origin --delete "refs/heads/$branch"
+          done < <(comm -23 \
+            <(git ls-remote --heads --refs origin | sed 's#.*refs/heads/##' | sort -u) \
+            <(git ls-remote --heads --refs gitee  | sed 's#.*refs/heads/##' | sort -u))
+
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "✗ deleting tag $tag"
+            git push origin --delete "refs/tags/$tag"
+          done < <(comm -23 \
+            <(git ls-remote --tags --refs origin | sed 's#.*refs/tags/##' | sort -u) \
+            <(git ls-remote --tags --refs gitee  | sed 's#.*refs/tags/##' | sort -u))
