@@ -1,6 +1,6 @@
 # dsh-flash-mem-mon
 
-dock-flash 的内存监控提供器 — 通过 `ctx.get('dockFlashAlerts')` 注册主机内存告警提供器（RSS 绝对阈值、RSS 增长率、Major GC 频率），并暴露 `/memory-trend` 路由用于趋势图。
+dsh-flash 的内存监控提供器 — 通过 `ctx.get('dockFlashAlerts')` 注册主机内存告警提供器（RSS 绝对阈值、RSS 增长率、Major GC 频率），并暴露 `/memory-trend` 路由用于趋势图。
 
 ## 安装
 
@@ -8,7 +8,7 @@ dock-flash 的内存监控提供器 — 通过 `ctx.get('dockFlashAlerts')` 注�
 dsh plugin --profile <profile> add dsh-flash-mem-mon
 ```
 
-需要 `dock-flash >=1.6.0`（提供 `dockFlashAlerts` 和 `quickControl` 服务）。
+需要 `dsh-flash >=1.0.0`（提供 `dockFlashAlerts` 和 `quickControl` 服务）。
 
 ## 配置
 

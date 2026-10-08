@@ -1,6 +1,6 @@
 # dsh-flash-mem-mon
 
-Memory monitor provider for [dock-flash](https://github.com/tcgbp/dock-flash) — registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate, Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend` for trend sparklines.
+Memory monitor provider for [dsh-flash](https://github.com/tcgbp/dsh-flash) — registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate, Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend` for trend sparklines.
 
 ## Installation
 
@@ -8,7 +8,7 @@ Memory monitor provider for [dock-flash](https://github.com/tcgbp/dock-flash) �
 dsh plugin --profile <profile> add dsh-flash-mem-mon
 ```
 
-Requires `dock-flash >=1.6.0` (provides `dockFlashAlerts` and `quickControl` services).
+Requires `dsh-flash >=1.0.0` (provides `dockFlashAlerts` and `quickControl` services).
 
 ## Configuration
 

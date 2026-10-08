@@ -48,6 +48,6 @@ url: https://github.com/tcgbp/dsh-flash-mem-mon
 name: tcgbp/dsh-flash-mem-mon
 category: memory
 description:
-  en: 'Memory and GC monitor for dock-flash: registers a host-memory-alert provider through the dockFlashAlerts service and its own switch through quickControl, reporting resident memory, memory growth rate and Major GC frequency, with its own settings namespace and a trend endpoint for sparklines.'
-  zh: 'dock-flash 的内存与 GC 监控插件：通过 dockFlashAlerts 注册宿主内存告警提供者、通过 quickControl 注册自己的开关，报告常驻内存、内存增长率与 Major GC 频率；拥有独立的设置命名空间，并提供趋势接口用于火花线。'
+  en: 'Memory and GC monitor for dsh-flash: registers a host-memory-alert provider through the dockFlashAlerts service and its own switch through quickControl, reporting resident memory, memory growth rate and Major GC frequency, with its own settings namespace and a trend endpoint for sparklines.'
+  zh: 'dsh-flash 核心的内存与 GC 监控插件：通过 dockFlashAlerts 注册宿主内存告警提供者、通过 quickControl 注册自己的开关，报告常驻内存、内存增长率与 Major GC 频率；拥有独立的设置命名空间，并提供趋势接口用于火花线。'
 tarball: https://github.com/tcgbp/dsh-flash-mem-mon/releases/latest/download/dsh-flash-mem-mon.tgz

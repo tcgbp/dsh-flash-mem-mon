@@ -1,1 +1,3 @@
 autoInstallPeers: false
+minimumReleaseAgeExclude:
+  - dsh-flash@1.0.0

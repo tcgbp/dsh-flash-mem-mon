@@ -1,7 +1,7 @@
 {
   "name": "dsh-flash-mem-mon",
-  "version": "0.1.4",
-  "description": "Memory monitor provider for dock-flash — registers a host-memory-alert provider (RSS absolute, RSS growth rate, Major GC frequency) via ctx.get('dockFlashAlerts') and exposes /memory-trend for trend sparklines.",
+  "version": "0.1.5",
+  "description": "Memory monitor provider for the `dsh-flash` Quick Control panel — registers a host-memory-alert provider (RSS absolute, RSS growth rate, Major GC frequency) via ctx.get('dockFlashAlerts') and exposes /memory-trend for trend sparklines.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,7 +22,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-api-remotes",
-        "dock-flash",
+        "dsh-flash",
         "dock-base"
       ],
       "platform": "web"
@@ -36,7 +36,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0-rc.1 <5.0.0-0 || >=4.0.1-0 <5.0.0-0",
     "dock-base": ">=0.1.2-0 <1.0.0-0 || >=0.2.0-0 <1.0.0-0",
-    "dock-flash": ">=1.6.0-0 <2.0.0-0 || >=2.0.0-0 <3.0.0-0"
+    "dsh-flash": ">=1.0.0-0 <2.0.0-0"
   },
   "peerDependenciesMeta": {
     "dock-base": { "optional": true }
