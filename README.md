@@ -25,6 +25,7 @@ All settings are live-editable (volatile) and take effect immediately:
 | `gcThresholdInfo` | 2 /min | Major GC info threshold |
 | `gcThresholdWarning` | 5 /min | Major GC warning threshold |
 | `gcThresholdError` | 10 /min | Major GC error threshold |
+| `memGrowthAlertPerMin` | 1 MB/min | RSS growth-rate (linear-regression slope) alert threshold, applied with trend = up |
 
 ## Architecture
 
