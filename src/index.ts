@@ -24,6 +24,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type { Volatile } from '@deepseek-ai/cordis'
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery'
+import { isFullGc, rssSlopePerMin } from './pure.js'
 
 export const name = 'dsh-flash-mem-mon'
 
@@ -59,22 +60,6 @@ const DEFAULT_GC_THRESHOLD_INFO = 2
 const DEFAULT_GC_THRESHOLD_WARNING = 5
 const DEFAULT_GC_THRESHOLD_ERROR = 10
 const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = 1
-
-// V8 GC entry `kind` is a bitmask of GC types:
-//   1 << 0 = Scavenge (minor / young-gen)
-//   1 << 1 = MarkSweepCompact (major / full)
-//   1 << 2 = IncrementalMarking
-//   1 << 3 = ProcessWeakCallbacks
-// In practice modern V8/Node reports a full MarkSweepCompact cycle through the
-// IncrementalMarking (4) and ProcessWeakCallbacks (8) phases — the standalone
-// "major" bit (2) is almost never emitted on its own.  Classifying Full GC by
-// `kind === 2` alone therefore misses (nearly) every real full collection.
-// The robust test: a Full GC is any NON-scavenge cycle, i.e. the Scavenge bit
-// (1) is NOT set.  This captures 2, 4, 6, 8, 10, 12, 14 while excluding minor
-// (1) scavenges.
-function isFullGc(kind: number): boolean {
-  return (kind & 1) === 0 && kind > 0
-}
 
 /** Resolved volatile config — each field is a live reference read with .get(). */
 export interface MemMonConfig {
@@ -142,8 +127,8 @@ interface MemoryTrendSummary {
   sampleCount: number
   /** Heap usage ratio of the latest sample (0–1). */
   heapRatio: number
-  /** Interval in seconds between the first and last sample (0 if < 2). */
-  spanSeconds: number
+  /** Interval in MILLISECONDS between the first and last sample (0 if < 2). */
+  spanMs: number
   /** RSS linear-regression slope per minute (MB/min). Positive = growing. */
   rssSlopePerMin: number
   /** GC statistics aggregated over the last ~5 minutes. */
@@ -230,7 +215,7 @@ class MemoryTrendCollector {
   summary(since?: number): MemoryTrendSummary {
     const data = this.query(since)
     if (data.length === 0) {
-      return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanSeconds: 0, rssSlopePerMin: 0, gc: null }
+      return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanMs: 0, rssSlopePerMin: 0, gc: null }
     }
     const current = data[data.length - 1]
     let peak = { heapUsed: 0, rss: 0, ts: 0 }
@@ -256,39 +241,18 @@ class MemoryTrendCollector {
       else if (slope < -threshold) trend = 'down'
     }
     const heapRatio = current.heapTotal > 0 ? current.heapUsed / current.heapTotal : 0
-    const spanSeconds = data.length >= 2 ? Math.round((data[data.length - 1].ts - data[0].ts) / 1000) : 0
+    const spanMs = data.length >= 2 ? data[data.length - 1].ts - data[0].ts : 0
 
-    // RSS linear regression over the last 20 samples → slope per minute (MB/min).
-    let rssSlopePerMin = 0
-    if (tail.length >= 3) {
-      const n = tail.length
-      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0
-      for (let i = 0; i < n; i++) {
-        sumX += i
-        sumY += tail[i].rss
-        sumXY += i * tail[i].rss
-        sumXX += i * i
-      }
-      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
-      // slope = bytes per sample-index step.  Convert to MB/min.
-      // The average interval MUST be derived from the tail's own first/last
-      // timestamps, NOT from spanSeconds, which spans the ENTIRE ring buffer
-      // and can be many times the tail's span. Using the full-buffer span here
-      // inflated avgIntervalSec → deflated samplesPerMin → under-reported MB/min
-      // (a monotonic-leak false negative). tail is time-ordered (it is the last
-      // N pushed samples), so ts[last]-ts[first] is a valid wall-clock span.
-      const tailSpanSec = tail.length >= 2
-        ? Math.max((tail[tail.length - 1].ts - tail[0].ts) / 1000, 0)
-        : 30
-      const avgIntervalSec = tailSpanSec > 0 ? tailSpanSec / (tail.length - 1) : 30
-      const samplesPerMin = avgIntervalSec > 0 ? 60 / avgIntervalSec : 2
-      rssSlopePerMin = Math.round((slope * samplesPerMin / 1048576) * 100) / 100
-    }
+    // RSS linear-regression slope per minute (MB/min); positive = growing.
+    // Delegated to the pure helper (src/pure.ts) so the same logic is unit-
+    // tested. The average interval comes from the tail's own time span — see
+    // rssSlopePerMin for why using the whole buffer span would under-report.
+    const rssSlope = rssSlopePerMin(data)
 
     // GC stats over the last ~5 minutes.
     const gc = this._gcSummary(5 * 60 * 1000)
 
-    return { current, peak, trend, sampleCount: data.length, heapRatio, spanSeconds, rssSlopePerMin, gc }
+    return { current, peak, trend, sampleCount: data.length, heapRatio, spanMs, rssSlopePerMin: rssSlope, gc }
   }
 
   /** Aggregate GC events in the last `windowMs` milliseconds. */

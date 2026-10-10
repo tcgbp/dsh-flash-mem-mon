@@ -29,7 +29,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "lint": "node --check lib/client.js && node --check test/pure.test.ts"
   },
   "dependencies": { "@deepseek-ai/schemastery": "^3.18.4" },
   "peerDependencies": {

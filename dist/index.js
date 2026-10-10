@@ -1,5 +1,6 @@
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery';
+import { isFullGc, rssSlopePerMin } from './pure.js';
 export const name = 'dsh-flash-mem-mon';
 // No host-side service dependencies; all services are injected lazily.
 export const inject = [];
@@ -13,21 +14,7 @@ const DEFAULT_MEM_POLL_MIN = 2000;
 const DEFAULT_GC_THRESHOLD_INFO = 2;
 const DEFAULT_GC_THRESHOLD_WARNING = 5;
 const DEFAULT_GC_THRESHOLD_ERROR = 10;
-// V8 GC entry `kind` is a bitmask of GC types:
-//   1 << 0 = Scavenge (minor / young-gen)
-//   1 << 1 = MarkSweepCompact (major / full)
-//   1 << 2 = IncrementalMarking
-//   1 << 3 = ProcessWeakCallbacks
-// In practice modern V8/Node reports a full MarkSweepCompact cycle through the
-// IncrementalMarking (4) and ProcessWeakCallbacks (8) phases — the standalone
-// "major" bit (2) is almost never emitted on its own.  Classifying Full GC by
-// `kind === 2` alone therefore misses (nearly) every real full collection.
-// The robust test: a Full GC is any NON-scavenge cycle, i.e. the Scavenge bit
-// (1) is NOT set.  This captures 2, 4, 6, 8, 10, 12, 14 while excluding minor
-// (1) scavenges.
-function isFullGc(kind) {
-    return (kind & 1) === 0 && kind > 0;
-}
+const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = 1;
 export const Config = Schema.object({
     memThresholdInfo: Schema.number().default(DEFAULT_MEM_THRESHOLD_INFO).volatile(),
     memThresholdWarning: Schema.number().default(DEFAULT_MEM_THRESHOLD_WARNING).volatile(),
@@ -38,6 +25,7 @@ export const Config = Schema.object({
     gcThresholdInfo: Schema.number().default(DEFAULT_GC_THRESHOLD_INFO).volatile(),
     gcThresholdWarning: Schema.number().default(DEFAULT_GC_THRESHOLD_WARNING).volatile(),
     gcThresholdError: Schema.number().default(DEFAULT_GC_THRESHOLD_ERROR).volatile(),
+    memGrowthAlertPerMin: Schema.number().default(DEFAULT_MEM_GROWTH_ALERT_PER_MIN).volatile(),
 });
 class MemoryTrendCollector {
     _samples = [];
@@ -114,7 +102,7 @@ class MemoryTrendCollector {
     summary(since) {
         const data = this.query(since);
         if (data.length === 0) {
-            return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanSeconds: 0, rssSlopePerMin: 0, gc: null };
+            return { current: null, peak: null, trend: 'stable', sampleCount: 0, heapRatio: 0, spanMs: 0, rssSlopePerMin: 0, gc: null };
         }
         const current = data[data.length - 1];
         let peak = { heapUsed: 0, rss: 0, ts: 0 };
@@ -143,28 +131,15 @@ class MemoryTrendCollector {
                 trend = 'down';
         }
         const heapRatio = current.heapTotal > 0 ? current.heapUsed / current.heapTotal : 0;
-        const spanSeconds = data.length >= 2 ? Math.round((data[data.length - 1].ts - data[0].ts) / 1000) : 0;
-        // RSS linear regression over the last 20 samples → slope per minute (MB/min).
-        let rssSlopePerMin = 0;
-        if (tail.length >= 3) {
-            const n = tail.length;
-            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-            for (let i = 0; i < n; i++) {
-                sumX += i;
-                sumY += tail[i].rss;
-                sumXY += i * tail[i].rss;
-                sumXX += i * i;
-            }
-            const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-            // slope = bytes per sample-index step.  Convert to MB/min.
-            // Average interval between tail samples ≈ spanSeconds / (n-1).
-            const avgIntervalSec = tail.length >= 2 ? spanSeconds / (tail.length - 1) : 30;
-            const samplesPerMin = avgIntervalSec > 0 ? 60 / avgIntervalSec : 2;
-            rssSlopePerMin = Math.round((slope * samplesPerMin / 1048576) * 100) / 100;
-        }
+        const spanMs = data.length >= 2 ? data[data.length - 1].ts - data[0].ts : 0;
+        // RSS linear-regression slope per minute (MB/min); positive = growing.
+        // Delegated to the pure helper (src/pure.ts) so the same logic is unit-
+        // tested. The average interval comes from the tail's own time span — see
+        // rssSlopePerMin for why using the whole buffer span would under-report.
+        const rssSlope = rssSlopePerMin(data);
         // GC stats over the last ~5 minutes.
         const gc = this._gcSummary(5 * 60 * 1000);
-        return { current, peak, trend, sampleCount: data.length, heapRatio, spanSeconds, rssSlopePerMin, gc };
+        return { current, peak, trend, sampleCount: data.length, heapRatio, spanMs, rssSlopePerMin: rssSlope, gc };
     }
     /** Aggregate GC events in the last `windowMs` milliseconds. */
     _gcSummary(windowMs) {
@@ -176,7 +151,14 @@ class MemoryTrendCollector {
         const majorRecent = this._gcMajorEvents.filter(e => e.ts >= cutoff);
         const majorCount = majorRecent.length;
         // Minor count + total pause come from the general ring buffer (which holds
-        // every event).  A minor cycle is a Scavenge (kind bit 1 set).
+        // EVERY PerformanceObserver entry). A minor cycle is a Scavenge (kind bit 1
+        // set). NOTE: gcPauseMs is the SUM of every phase-entry duration in the
+        // window — one real Full GC is reported as multiple phases (kind 4 + 8), and
+        // each contributes its own duration, so gcPauseMs is the TOTAL stop-the-world
+        // pause across all cycles (minor + full), NOT per-cycle. majorCount, by
+        // contrast, comes from the separate coalesced buffer and counts each real
+        // Full GC cycle ONCE. The two buffers intentionally have different semantics:
+        // majorCount = distinct full collections; gcPauseMs = aggregate pauses.
         let minorCount = 0, gcPauseMs = 0;
         for (const e of this._gcEvents) {
             if (e.ts < cutoff)
@@ -257,8 +239,45 @@ class MemoryTrendCollector {
             this._samples.shift();
     }
 }
-/** Module-level singleton — one collector per process. */
+// ── Process-scoped singleton with an exclusive active owner ─────────────
+//
+// A single MemoryTrendCollector is shared across the whole process so all
+// consumers see one coherent ring buffer (each sample carries its own ts).
+// However, Cordis may apply() this plugin more than once (multiple profiles,
+// hot reload) and dispose() them in any order. To avoid two collectors racing
+// on the same module state — and to stop one stray dispose() from killing a
+// collector another apply() is still using — ownership is explicit:
+//
+//   _memoryTrend  : the live collector (or null)
+//   _ownerCtx     : the Context that currently owns it (or null)
+//
+// startTrend()/stopTrend() are idempotent and fail softly when the caller is
+// not the current owner, so overlapping apply/dispose cycles stay safe.
 let _memoryTrend = null;
+let _ownerCtx = null;
+/** Adopt the process-wide collector for `ctx`; no-op if it is already owned. */
+function startTrend(ctx, config) {
+    if (_ownerCtx && _ownerCtx !== ctx)
+        return; // someone else owns it
+    if (!_memoryTrend)
+        _memoryTrend = new MemoryTrendCollector();
+    _ownerCtx = ctx;
+    _memoryTrend.start((config.memPollBase?.get?.() ?? config.memPollBase) || DEFAULT_MEM_POLL_BASE, (config.memPollMin?.get?.() ?? config.memPollMin) || DEFAULT_MEM_POLL_MIN);
+}
+function restartTrend(config) {
+    if (!_memoryTrend || !_ownerCtx)
+        return;
+    _memoryTrend.stop();
+    _memoryTrend.start((config.memPollBase?.get?.() ?? config.memPollBase) || DEFAULT_MEM_POLL_BASE, (config.memPollMin?.get?.() ?? config.memPollMin) || DEFAULT_MEM_POLL_MIN);
+}
+/** Relinquish ownership of `ctx`. Only the active owner may stop the shared
+ *  collector; other ctx instances (already superseded) must not touch it. */
+function stopTrend(ctx) {
+    if (_ownerCtx !== ctx)
+        return; // not the owner → leave the running collector alone
+    _ownerCtx = null;
+    _memoryTrend?.stop();
+}
 // ── Private HTTP helpers ────────────────────────────────────────────────
 /** Send a JSON response with no-store cache control. */
 function sendJson(res, status, payload) {
@@ -267,29 +286,6 @@ function sendJson(res, status, payload) {
     res.setHeader('cache-control', 'no-store');
     res.end(JSON.stringify(payload));
 }
-/**
- * Read an optional JSON request body, bounded so a client cannot feed the
- * host an unbounded buffer. Returns null for an empty, oversized, or
- * unparseable body — callers treat that as "no override supplied".
- */
-async function readJsonBody(req, limit = 4096) {
-    try {
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of req) {
-            size += chunk.length;
-            if (size > limit)
-                return null;
-            chunks.push(chunk);
-        }
-        if (chunks.length === 0)
-            return null;
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    }
-    catch (_) {
-        return null;
-    }
-}
 // ── apply() ─────────────────────────────────────────────────────────────
 export function apply(ctx, config) {
     // ── Settings namespace registration ──────────────────────────────────
@@ -297,39 +293,37 @@ export function apply(ctx, config) {
         settingsCtx.effect(() => settingsCtx.settings.configure({ auto: false }, ctx.fiber));
     });
     // ── Memory trend collector bootstrap ──────────────────────────────────
-    // One bounded ring buffer per process. Starts on first apply and stops on
-    // dispose. The timer uses .unref() so it never keeps the process alive.
-    if (!_memoryTrend)
-        _memoryTrend = new MemoryTrendCollector();
-    _memoryTrend.start((config.memPollBase?.get?.() ?? config.memPollBase) || DEFAULT_MEM_POLL_BASE, (config.memPollMin?.get?.() ?? config.memPollMin) || DEFAULT_MEM_POLL_MIN);
+    // One bounded ring buffer per process, owned exclusively by the active ctx.
+    // startTrend/stopTrend are idempotent and owner-guarded, so overlapping
+    // apply/dispose cycles never double-start or kill a still-live collector.
+    startTrend(ctx, config);
     ctx.effect(() => {
-        const collector = _memoryTrend;
-        return () => {
-            collector?.stop();
-            _memoryTrend = null;
-        };
-    });
+        const owner = ctx;
+        return () => { stopTrend(owner); };
+    }, 'dsh-flash-mem-mon: memory-trend collector lifecycle');
     // ── Volatile-update handler for poll intervals ────────────────────────
     // Restart the collector when memPollBase or memPollMin change.
     ctx.on('loader/volatile-update', (paths) => {
         const memPaths = ['memPollBase', 'memPollMin'];
         if (!paths.some((pp) => pp.length && memPaths.includes(pp[pp.length - 1])))
             return;
-        if (_memoryTrend) {
-            _memoryTrend.stop();
-            _memoryTrend.start((config.memPollBase?.get?.() ?? config.memPollBase) || DEFAULT_MEM_POLL_BASE, (config.memPollMin?.get?.() ?? config.memPollMin) || DEFAULT_MEM_POLL_MIN);
-        }
+        restartTrend(config);
     });
     // ── HTTP API route for client-side trend data ────────────────────────
-    // The webServer type augmentation lives in @deepseek-ai/dsh-host-webserver
-    // which is not a direct dependency; cast through `any` for the register calls.
+    // Uses a structural HostWebServer type instead of `any`. cordis's inject()
+    // callback is statically typed as Context (the real webServer augmentation
+    // lives in @deepseek-ai/dsh-host-webserver, not a compile-time dep here), so
+    // the injected service is read through one narrow cast inside the callback —
+    // when inject(keys) fires, the service is guaranteed present — then used
+    // under the strong HostWebServer type for the whole register/effect block.
     ctx.inject(['webServer'], (wsCtx) => {
+        const ws = wsCtx.webServer;
         // GET /plugins/dsh-flash-mem-mon/memory-trend
         // Returns memory trend data for the client's config popup.
         // `mode=summary` returns a lightweight snapshot (current, peak, trend direction);
         // `mode=full` returns the raw samples for rendering a chart.
         // Optional `since` (unix ms) limits the range.
-        wsCtx.effect(() => wsCtx.webServer.register({
+        wsCtx.effect(() => ws.register({
             kind: 'exact',
             path: '/plugins/dsh-flash-mem-mon/memory-trend',
             handler: async (req, res) => {
