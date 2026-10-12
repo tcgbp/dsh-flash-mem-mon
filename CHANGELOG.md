@@ -9,6 +9,36 @@ registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate
 Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend`
 for the trend sparklines shown in the panel.
 
+## 0.1.6
+
+**i18n now reuses DSH's official internationalization framework.** The client half
+used to run its own locale detection: read `<html lang>`, map it to `zh`/`en`, and
+keep a `MutationObserver` on that attribute so the UI followed a language switch.
+`<html lang>` is not this plugin's property — the client Cordis service `locale`
+(`@deepseek-ai/dsh-client-locale`) owns the active-locale preference, the dictionary
+registry, the `locale/change` event and that attribute. Watching it was a side
+channel: it could not see a switch that had not reached the DOM yet, and it fired
+for a value nobody had chosen. The tables are now registered with the service under
+the `dsh-flash-mem-mon` namespace and every read goes through it, with the eager
+`ctx.get('locale')` claim paired to a `ctx.inject(['locale'])` watcher for the case
+where the service is provided after this module — a transient miss never tears down
+a working registration, and the fallback stays the browser language on the primary
+subtag. The refresh nudge rides the `locale/change` **event**, not the service's
+`subscribe()` — that is the LocaleFace render channel and fires on every revision
+bump *including* dictionary registration, which happens once per plugin at boot;
+`locale/change` is emitted only when the active locale actually switches, so the
+imperative surfaces (Quick Control row via `quickControl.notifyChange()`, alert feed
+via `alerts.notify()` — its `title`/`message` are functions precisely so they
+re-read the dictionary) are nudged on a real switch, not on a registration under an
+unchanged language. The open config modal rides the same event through its own
+`t.onLocaleChange()` subscription. The dependency is now declared:
+`@deepseek-ai/dsh-client-locale` is added to `dsh.client.inject` (load order, like
+`dsh-flash` and `dsh-flash-proxy`), so the reuse is explicit rather than borrowed
+through `dsh-flash`'s own inject row. There is deliberately no `t.setLocale()` here —
+this plugin is a pure reader and the language row belongs to `dsh-flash`; a second
+writer would be the drift this removes. Client half only; the zh/en key sets and
+every call site are unchanged.
+
 ## 0.1.5
 
 **Follows the panel core to `dsh-flash`.** First release after the core/adapter

@@ -32,7 +32,7 @@ All settings are live-editable (volatile) and take effect immediately:
 This is a **companion plugin** following the same two-half pattern as `dsh-flash-net-mon`:
 
 - **Host half** (`src/index.ts` → tsc → `dist/index.js`): Memory trend ring buffer, GC observer, `/memory-trend` HTTP route
-- **Client half** (`lib/client.js`): Alert provider, enable toggle, config modal with sparkline, i18n
+- **Client half** (`lib/client.js`): Alert provider, enable toggle, config modal with sparkline, i18n via DSH's `locale` service
 
 ## License
 

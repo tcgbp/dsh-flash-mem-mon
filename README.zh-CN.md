@@ -31,7 +31,7 @@ dsh plugin --profile <profile> add dsh-flash-mem-mon
 本插件为 **伴随插件**，遵循与 `dsh-flash-net-mon` 相同的双半模式：
 
 - **宿主端** (`src/index.ts` → tsc → `dist/index.js`)：内存趋势环形缓冲区、GC 观察器、`/memory-trend` HTTP 路由
-- **客户端** (`lib/client.js`)：告警提供器、启用开关、带趋势图的配置弹窗、国际化
+- **客户端** (`lib/client.js`)：告警提供器、启用开关、带趋势图的配置弹窗、复用 DSH 官方 `locale` 服务的国际化
 
 ## 许可证
 
