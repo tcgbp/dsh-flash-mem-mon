@@ -13,6 +13,14 @@ const DEFAULT_MEM_POLL_MIN = 2000;
 const DEFAULT_GC_THRESHOLD_INFO = 2;
 const DEFAULT_GC_THRESHOLD_WARNING = 5;
 const DEFAULT_GC_THRESHOLD_ERROR = 10;
+/**
+ * Sentinel passed to `query()` / `gcEvents()` as the `since` lower bound to
+ * mean "no lower bound — return ALL stored records".  These methods treat any
+ * `since <= 0` (0 or undefined) as "all", and a positive value as a unix-ms
+ * timestamp to filter from.  Keeping one explicit convention prevents callers
+ * from mixing up `0` vs `undefined` (both mean "all").
+ */
+const SINCE_ALL = 0;
 // V8 GC entry `kind` is a bitmask of GC types:
 //   1 << 0 = Scavenge (minor / young-gen)
 //   1 << 1 = MarkSweepCompact (major / full)
@@ -87,27 +95,25 @@ class MemoryTrendCollector {
         }
         this._stopGcObserver();
     }
-    setCap(cap) {
-        this._cap = Math.max(10, Math.floor(cap) || 10);
-        while (this._samples.length > this._cap)
-            this._samples.shift();
-    }
-    query(since) {
-        if (!since)
+    /** Memory samples at or after `since` (unix ms). A falsy/absent `since`
+     *  (`SINCE_ALL` / undefined) means "return all stored samples". */
+    query(since = SINCE_ALL) {
+        if (since <= 0)
             return this._samples.slice();
         return this._samples.filter(s => s.ts >= since);
     }
     /** Return Full (major) GC events for chart rendering.
-     *  Pass since=0 to return ALL stored events (for full-mode fetches).
      *  Each returned event is one real full-GC cycle (phases already coalesced
      *  in `_startGcObserver`) and is normalized to kind=2 so the client can
-     *  always treat `gcEvents` as "Full GC events". */
-    gcEvents(since) {
+     *  always treat `gcEvents` as "Full GC events".  A falsy/absent `since`
+     *  (`SINCE_ALL` / undefined) means "return all stored events". */
+    gcEvents(since = SINCE_ALL) {
         if (this._gcMajorEvents.length === 0)
             return [];
-        const cutoff = since ?? (Date.now() - 5 * 60 * 1000);
-        return this._gcMajorEvents
-            .filter(e => e.ts >= cutoff)
+        const events = since > 0
+            ? this._gcMajorEvents.filter(e => e.ts >= since)
+            : this._gcMajorEvents;
+        return events
             .map(e => ({ ts: e.ts, kind: 2, duration: e.duration }))
             .sort((a, b) => a.ts - b.ts);
     }
@@ -267,29 +273,6 @@ function sendJson(res, status, payload) {
     res.setHeader('cache-control', 'no-store');
     res.end(JSON.stringify(payload));
 }
-/**
- * Read an optional JSON request body, bounded so a client cannot feed the
- * host an unbounded buffer. Returns null for an empty, oversized, or
- * unparseable body — callers treat that as "no override supplied".
- */
-async function readJsonBody(req, limit = 4096) {
-    try {
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of req) {
-            size += chunk.length;
-            if (size > limit)
-                return null;
-            chunks.push(chunk);
-        }
-        if (chunks.length === 0)
-            return null;
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    }
-    catch (_) {
-        return null;
-    }
-}
 // ── apply() ─────────────────────────────────────────────────────────────
 export function apply(ctx, config) {
     // ── Settings namespace registration ──────────────────────────────────
@@ -347,24 +330,20 @@ export function apply(ctx, config) {
                 const since = parseInt(u.searchParams.get('since') || '0', 10) || 0;
                 const mode = u.searchParams.get('mode') || 'summary';
                 if (mode === 'full') {
-                    // For gcEvents: when no explicit `since` is requested (since=0),
-                    // pass 0 so ALL stored events are returned — not just the last 5 min.
-                    // gcEvents(0) → cutoff=0 → returns everything.
-                    // gcEvents(undefined) → cutoff=now-5min → only recent events.
-                    // The sparkline may span hours, so we need the full range.
-                    const gcSince = since > 0 ? since : 0;
-                    // Only return full (major) GC events to the client — minor GC is too
-                    // frequent and clutters the chart.  These are already coalesced into
-                    // one event per real cycle by `_startGcObserver`.  Minor GC stats are
+                    // `since` is already >= 0 here; 0 means "entire range" (SINCE_ALL),
+                    // so both `query` and `gcEvents` share the same bounds convention.
+                    // Only full (major) GC events are sent — minor GC is too frequent
+                    // and clutters the chart.  These are already coalesced into one
+                    // event per real cycle by `_startGcObserver`.  Minor GC stats are
                     // still available via mode=summary (majorPerMin, gcPausePerMin).
-                    const majorGcEvents = _memoryTrend.gcEvents(gcSince);
+                    const majorGcEvents = _memoryTrend.gcEvents(since);
                     sendJson(res, 200, {
-                        samples: _memoryTrend.query(since || undefined),
+                        samples: _memoryTrend.query(since),
                         gcEvents: majorGcEvents,
                     });
                 }
                 else {
-                    sendJson(res, 200, _memoryTrend.summary(since || undefined));
+                    sendJson(res, 200, _memoryTrend.summary(since));
                 }
             },
         }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/memory-trend');
