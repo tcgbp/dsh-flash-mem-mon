@@ -10,15 +10,14 @@
 #   file has to land on `master` for the cron to fire at all.
 # - The Gitee repository is public, so no Secret is required: it is cloned
 #   anonymously over https, and Gitee is never pushed to.
-# - Pushing to GitHub uses the built-in GITHUB_TOKEN (contents: write). If the
-#   organization restricts the default workflow permissions, allow "Read and
-#   write permissions" for this repository.
+# - Pushing to GitHub is authenticated by the SYNC_PAT repository secret (a
+#   PAT with contents: write on this repo), injected through GITHUB_URL.
 # - Gitee history wins: branches are force-pushed, so a GitHub-only commit on a
 #   branch that also exists on Gitee is overwritten. Do not merge on GitHub.
 # - Stale branches and tags are deleted only on a manual dispatch with
 #   `delete_stale_branches` checked; scheduled runs never delete anything.
-# - Commits pushed with GITHUB_TOKEN do not start other workflows (GitHub
-#   suppresses recursive runs), so mirrored commits trigger no CI here.
+# - Commits pushed with a PAT start other workflows (unlike GITHUB_TOKEN
+#   pushes, which GitHub suppresses), so mirrored commits may trigger CI here.
 # - A branch-protection rule that requires pull requests on `master` will reject
 #   the push; relax it for this workflow or the force-push fails.
 
@@ -45,6 +44,7 @@ permissions:
 
 env:
   GITEE_REPO: https://gitee.com/lenin.guo/dsh-flash-mem-mon.git
+  GITHUB_URL: https://x-access-token:${{ secrets.SYNC_PAT }}@github.com/tcgbp/dsh-flash-mem-mon.git
 
 jobs:
   mirror:
@@ -57,7 +57,9 @@ jobs:
           # Full history for every branch, and keep the token on `origin` so
           # the push steps below are authenticated.
           fetch-depth: 0
-          persist-credentials: true
+          # Credentials are NOT persisted here; pushes authenticate via
+          # GITHUB_URL using SYNC_PAT.
+          persist-credentials: false
 
       - name: Fetch branches and tags from Gitee
         run: |
@@ -79,14 +81,14 @@ jobs:
           while read -r branch; do
             [ -n "$branch" ] || continue
             echo "→ $branch"
-            git push --force origin "refs/remotes/gitee/$branch:refs/heads/$branch"
+            git push --force "$GITHUB_URL" "refs/remotes/gitee/$branch:refs/heads/$branch"
           done < <(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/gitee)
 
       - name: Push tags to GitHub
         run: |
           set -euo pipefail
           # --force so a tag rewritten on Gitee replaces the GitHub one.
-          git push --force --tags origin
+          git push --force --tags "$GITHUB_URL"
 
       - name: Delete branches and tags that no longer exist on Gitee
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_stale_branches }}
@@ -103,15 +105,15 @@ jobs:
               continue
             fi
             echo "✗ deleting branch $branch"
-            git push origin --delete "refs/heads/$branch"
+            git push "$GITHUB_URL" --delete "refs/heads/$branch"
           done < <(comm -23 \
-            <(git ls-remote --heads --refs origin | sed 's#.*refs/heads/##' | sort -u) \
+            <(git ls-remote --heads --refs "$GITHUB_URL" | sed 's#.*refs/heads/##' | sort -u) \
             <(git ls-remote --heads --refs gitee  | sed 's#.*refs/heads/##' | sort -u))
 
           while read -r tag; do
             [ -n "$tag" ] || continue
             echo "✗ deleting tag $tag"
-            git push origin --delete "refs/tags/$tag"
+            git push "$GITHUB_URL" --delete "refs/tags/$tag"
           done < <(comm -23 \
-            <(git ls-remote --tags --refs origin | sed 's#.*refs/tags/##' | sort -u) \
+            <(git ls-remote --tags --refs "$GITHUB_URL" | sed 's#.*refs/tags/##' | sort -u) \
             <(git ls-remote --tags --refs gitee  | sed 's#.*refs/tags/##' | sort -u))
