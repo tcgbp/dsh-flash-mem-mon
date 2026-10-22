@@ -1,6 +1,18 @@
 // Pure, dependency-free helpers extracted from index.ts so they can be unit
 // tested without pulling in cordis / node HTTP / GC-entry types. Everything
 // here is a pure function of its inputs.
+export const DEFAULT_ALERT_CONFIG = {
+    memThresholdInfo: 256,
+    memThresholdWarning: 512,
+    memThresholdError: 1024,
+    memThresholdCritical: 1536,
+    memPollBase: 30000,
+    memPollMin: 2000,
+    gcThresholdInfo: 2,
+    gcThresholdWarning: 5,
+    gcThresholdError: 10,
+    memGrowthAlertPerMin: 1,
+};
 /**
  * Classify a V8 GC `kind` bitmask as a full (major) cycle.
  *

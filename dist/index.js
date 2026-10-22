@@ -1,20 +1,24 @@
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery';
-import { isFullGc, rssSlopePerMin } from './pure.js';
+import { DEFAULT_ALERT_CONFIG, isFullGc, rssSlopePerMin } from './pure.js';
 export const name = 'dsh-flash-mem-mon';
 // No host-side service dependencies; all services are injected lazily.
 export const inject = [];
 // ── Memory alert thresholds (RSS MB) and GC thresholds (major GC/min) ──
-const DEFAULT_MEM_THRESHOLD_INFO = 256;
-const DEFAULT_MEM_THRESHOLD_WARNING = 512;
-const DEFAULT_MEM_THRESHOLD_ERROR = 1024;
-const DEFAULT_MEM_THRESHOLD_CRITICAL = 1536;
-const DEFAULT_MEM_POLL_BASE = 30000;
-const DEFAULT_MEM_POLL_MIN = 2000;
-const DEFAULT_GC_THRESHOLD_INFO = 2;
-const DEFAULT_GC_THRESHOLD_WARNING = 5;
-const DEFAULT_GC_THRESHOLD_ERROR = 10;
-const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = 1;
+// All values come from the single canonical DEFAULT_ALERT_CONFIG in
+// ./pure.js. The browser client half mirrors these (see lib/client.js
+// _MEM_ALERT_DEFAULTS); test/defaults-drift.test.ts guarantees they never
+// drift from this source of truth.
+const DEFAULT_MEM_THRESHOLD_INFO = DEFAULT_ALERT_CONFIG.memThresholdInfo;
+const DEFAULT_MEM_THRESHOLD_WARNING = DEFAULT_ALERT_CONFIG.memThresholdWarning;
+const DEFAULT_MEM_THRESHOLD_ERROR = DEFAULT_ALERT_CONFIG.memThresholdError;
+const DEFAULT_MEM_THRESHOLD_CRITICAL = DEFAULT_ALERT_CONFIG.memThresholdCritical;
+const DEFAULT_MEM_POLL_BASE = DEFAULT_ALERT_CONFIG.memPollBase;
+const DEFAULT_MEM_POLL_MIN = DEFAULT_ALERT_CONFIG.memPollMin;
+const DEFAULT_GC_THRESHOLD_INFO = DEFAULT_ALERT_CONFIG.gcThresholdInfo;
+const DEFAULT_GC_THRESHOLD_WARNING = DEFAULT_ALERT_CONFIG.gcThresholdWarning;
+const DEFAULT_GC_THRESHOLD_ERROR = DEFAULT_ALERT_CONFIG.gcThresholdError;
+const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = DEFAULT_ALERT_CONFIG.memGrowthAlertPerMin;
 /**
  * Sentinel passed to `query()` / `gcEvents()` as the `since` lower bound to
  * mean "no lower bound — return ALL stored records".  These methods treat any

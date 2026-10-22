@@ -11,6 +11,44 @@ export interface PureSample {
 }
 
 /**
+ * CANONICAL default alert configuration. This is the SINGLE source of truth
+ * for every memory/GC threshold default.
+ *
+ * The host (`src/index.ts`) derives its `DEFAULT_*` Config values from this
+ * object, and the browser client half (`lib/client.js`) keeps its own
+ * `_MEM_ALERT_DEFAULTS` mirror for synchronous bootstrap (the client is a
+ * deliberately no-build, single-file module that cannot `import` this ESM
+ * host module). `test/defaults-drift.test.ts` asserts the two NEVER drift, so
+ * editing one side without the other is a hard CI failure instead of a silent
+ * divergence.
+ */
+export interface AlertDefaults {
+  memThresholdInfo: number
+  memThresholdWarning: number
+  memThresholdError: number
+  memThresholdCritical: number
+  memPollBase: number
+  memPollMin: number
+  gcThresholdInfo: number
+  gcThresholdWarning: number
+  gcThresholdError: number
+  memGrowthAlertPerMin: number
+}
+
+export const DEFAULT_ALERT_CONFIG: AlertDefaults = {
+  memThresholdInfo: 256,
+  memThresholdWarning: 512,
+  memThresholdError: 1024,
+  memThresholdCritical: 1536,
+  memPollBase: 30000,
+  memPollMin: 2000,
+  gcThresholdInfo: 2,
+  gcThresholdWarning: 5,
+  gcThresholdError: 10,
+  memGrowthAlertPerMin: 1,
+}
+
+/**
  * Classify a V8 GC `kind` bitmask as a full (major) cycle.
  *
  * V8 GC entry `kind` is a bitmask:
