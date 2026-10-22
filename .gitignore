@@ -1,4 +1,5 @@
 node_modules/
+.pnpm-store/
 
 # Release artifacts. The tarball the dsh-market entry points at is built by
 # `pnpm pack` from the tagged commit and uploaded to a GitHub Release; a stale
