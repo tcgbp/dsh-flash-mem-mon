@@ -146,7 +146,16 @@ interface MemoryTrendSummary {
 
 class MemoryTrendCollector {
   private _samples: MemorySample[] = []
-  private _timer: ReturnType<typeof setInterval> | null = null
+  // The poll loop is self-scheduling via setInterval-like recursion with an
+  // ADAPTIVE delay (higher heap usage → shorter interval), so each cycle holds
+  // a fresh setTimeout handle rather than one fixed-interval setInterval.
+  private _timer: ReturnType<typeof setTimeout> | null = null
+  /** Monotonic loop generation. Bumped every start()/stop(); a poll() tick
+   *  whose captured generation no longer matches the current one is a stale
+   *  callback from a superseded loop and must NOT re-schedule itself. This
+   *  closes the start/stop restart race where a queued pre-restart tick could
+   *  otherwise clobber the new loop's timer handle and leak a second loop. */
+  private _generation = 0
   private _cap: number
 
   // GC monitoring via PerformanceObserver
@@ -163,10 +172,15 @@ class MemoryTrendCollector {
 
   start(baseInterval = 30_000, minInterval = 5_000): void {
     this.stop()
+    const gen = ++this._generation
     // Fire-and-forget: GC observer can start asynchronously; the poll loop
     // below begins immediately regardless, since it does not depend on GC.
     this._startGcObserver().catch(() => {})
     const poll = () => {
+      // Bail if this tick belongs to a superseded loop (a restart has bumped
+      // the generation since we were scheduled). The stopped loop then winds
+      // down on its own instead of fighting the fresh loop for this._timer.
+      if (gen !== this._generation) return
       const mu = process.memoryUsage()
       this._push({
         ts: Date.now(),
@@ -190,6 +204,10 @@ class MemoryTrendCollector {
   }
 
   stop(): void {
+    // Bump the generation BEFORE clearing so any in-flight/stale poll tick that
+    // is already queued (past clearTimeout's reach) recognises itself as stale
+    // and refuses to re-schedule, never resurrecting a stopped loop.
+    this._generation++
     if (this._timer !== null) {
       clearTimeout(this._timer)
       this._timer = null
