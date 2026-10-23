@@ -22,6 +22,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type {} from '@deepseek-ai/dsh-settings'
 import type { Volatile } from '@deepseek-ai/cordis'
+import { writeHeapSnapshot } from 'node:v8'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery'
 import { DEFAULT_ALERT_CONFIG, isFullGc, rssSlopePerMin } from './pure.js'
@@ -394,6 +399,14 @@ class MemoryTrendCollector {
 let _memoryTrend: MemoryTrendCollector | null = null
 let _ownerCtx: Context | null = null
 
+// ── Heap-snapshot dump state ─────────────────────────────────────────────
+// The "dump heap now" disposal button on an alert POSTs dump-heap, which
+// writes a .heapsnapshot (possibly tens–hundreds of MB) and records it here
+// so the browser client can pull it down via the heap-dump route. Only the
+// latest snapshot is kept for download; dumps are user-paced, not automatic,
+// because writeHeapSnapshot() blocks the host main thread for seconds.
+let _lastSnapshot: { name: string; path: string; size: number } | null = null
+
 /** Adopt the process-wide collector for `ctx`; no-op if it is already owned. */
 function startTrend(ctx: Context, config: MemMonConfig): void {
   if (_ownerCtx && _ownerCtx !== ctx) return  // someone else owns it
@@ -506,5 +519,71 @@ export function apply(ctx: Context, config: MemMonConfig) {
         }
       },
     }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/memory-trend')
+
+    // POST /plugins/dsh-flash-mem-mon/dump-heap
+    // Triggered by the "立即转储堆快照" disposal button attached to a memory
+    // alert (see lib/client.js createHostMemoryAlertProvider → actions).
+    // Synchronously writes a .heapsnapshot into the OS temp dir (the one
+    // acceptable place to block the main thread: the user asked for it), then
+    // records it as the latest snapshot and returns its name+size so the
+    // client can confirm and pull it down. Auto-dump is deliberately NOT
+    // offered anywhere — a runaway gleaning loop must never stall the host.
+    wsCtx.effect(() => ws.register({
+      kind: 'exact',
+      path: '/plugins/dsh-flash-mem-mon/dump-heap',
+      handler: async (_req: IncomingMessage, res: ServerResponse) => {
+        if (_req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const name = `dsh-flash-mem-mon-${Date.now()}.${process.pid}.heapsnapshot`
+        const path = join(tmpdir(), name)
+        try {
+          writeHeapSnapshot(path)
+          const info = await stat(path)
+          _lastSnapshot = { name, path, size: info.size }
+          sendJson(res, 200, { ok: true, name, size: info.size, path })
+        } catch (err: any) {
+          sendJson(res, 500, { ok: false, error: (err && err.message) || 'heap snapshot failed' })
+        }
+      },
+    }), 'dsh-flash-mem-mon: POST /plugins/dsh-flash-mem-mon/dump-heap')
+
+    // GET /plugins/dsh-flash-mem-mon/heap-dump
+    // Streams the most recent heap snapshot back to the client as an
+    // attachment. One latest-at-a-time is fine here: dumps are user-paced and
+    // downloading is immediate, so keeping a whole archive is unnecessary
+    // (and the tmp files are already pruned by the OS over time).
+    wsCtx.effect(() => ws.register({
+      kind: 'exact',
+      path: '/plugins/dsh-flash-mem-mon/heap-dump',
+      handler: async (_req: IncomingMessage, res: ServerResponse) => {
+        if (_req.method !== 'GET') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET')
+          res.end()
+          return
+        }
+        const snap = _lastSnapshot
+        if (!snap) {
+          sendJson(res, 404, { error: 'No heap snapshot available yet' })
+          return
+        }
+        try {
+          await stat(snap.path)  // ensure it still exists
+          res.statusCode = 200
+          res.setHeader('content-type', 'application/octet-stream')
+          res.setHeader('content-length', String(snap.size))
+          res.setHeader('content-disposition', `attachment; filename="${snap.name}"`)
+          res.setHeader('cache-control', 'no-store')
+          createReadStream(snap.path).pipe(res)
+        } catch (_e) {
+          _lastSnapshot = null  // stale entry; drop it
+          sendJson(res, 404, { error: 'Heap snapshot no longer available' })
+        }
+      },
+    }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/heap-dump')
   })
 }

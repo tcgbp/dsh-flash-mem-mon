@@ -9,6 +9,14 @@ registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate
 Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend`
 for the trend sparklines shown in the panel.
 
+## Unreleased
+
+**Alert 处置按钮：立即转储堆快照。** 用上核心 `dsh-flash` 告警面板注册处置按钮的能力（告警对象上的 `actions` 数组 → 每条渲染一个按钮，`onClick(alert, api)` 执行期间按钮置灰，返回 `{message}` 保持详情面板打开）。内存/T GC 告警卡片（`host-mem-*`、`host-mem-growth`、`host-gc-*`）都挂载了同一个「立即转储堆快照」处置按钮：
+
+- 点按后客户端 `POST /plugins/dsh-flash-mem-mon/dump-heap`；
+- 宿主端 `v8.writeHeapSnapshot()` 同步写入 OS 临时目录（仅用户主动触发时才允许阻塞主线，绝不自动转储），记录最近一次快照并返回 `{name,size}`；
+- 客户端借 `GET /plugins/dsh-flash-mem-mon/heap-dump` 以附件形式流式下载 `.heapsnapshot`，把保存路径回显在按钮行状态里，保持详情面板打开以便用户读取。
+
 ## 0.1.7
 
 **Release engineering only — no runtime behaviour change.** The publish workflow is
