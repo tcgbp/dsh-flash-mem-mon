@@ -9,6 +9,14 @@ registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate
 Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend`
 for the trend sparklines shown in the panel.
 
+## 0.1.7
+
+**Release engineering only — no runtime behaviour change.** The publish workflow is
+corrected: `pnpm run --if-present build` (the flag belongs to pnpm, not the run script)
+instead of the mis-ordered `pnpm run build --if-present`, pnpm pinned to `11.5.3`, and
+the npm upgrade step pinned to `npm@11` for trusted publishing — no `registry-url`, so
+OIDC/provenance applies on publish.
+
 ## 0.1.6
 
 **i18n now reuses DSH's official internationalization framework.** The client half
