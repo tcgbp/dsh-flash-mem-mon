@@ -364,9 +364,12 @@ class MemoryTrendCollector {
           // because they are rare and the general ring buffer may evict them.
           if (isFullGc(kind)) {
             const last = this._gcMajorEvents[this._gcMajorEvents.length - 1]
-            if (last && event.ts - last.ts < 500) {
+            if (last && event.ts - last.ts < 2000) {
               // Same full-GC cycle (phase entries arriving back-to-back):
               // merge into the existing event, keeping the worst-case pause.
+              // Window is generous (2s) because one cycle's phases can arrive
+              // over a second apart under real load; merging here prevents one
+              // Full GC from being reported as several adjacent events.
               last.duration = Math.max(last.duration, event.duration)
               last.ts = event.ts
             } else {
