@@ -24,12 +24,19 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type { Volatile } from '@deepseek-ai/cordis'
 import { writeHeapSnapshot } from 'node:v8'
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery'
-import { DEFAULT_ALERT_CONFIG, isFullGc, rssSlopePerMin } from './pure.js'
+import {
+  countArchivedSessions,
+  DEFAULT_ALERT_CONFIG,
+  formatBytes,
+  isFullGc,
+  rssSlopePerMin,
+  sumBytes,
+} from './pure.js'
 
 export const name = 'dsh-flash-mem-mon'
 
@@ -50,8 +57,10 @@ interface HostWebServer {
   register(input: HostWebServerRegisterInput): () => void
 }
 
-// No host-side service dependencies; all services are injected lazily.
-export const inject: string[] = []
+// Lazy-injected services. All are resolved via ctx.inject() at apply-time, so
+// the plugin still boots even when a service (e.g. workspaceRegistry) is
+// unavailable; declaring them here documents the dependency.
+export const inject: string[] = ['workspaceRegistry']
 
 // ── Memory alert thresholds (RSS MB) and GC thresholds (major GC/min) ──
 // All values come from the single canonical DEFAULT_ALERT_CONFIG in
@@ -69,6 +78,15 @@ const DEFAULT_GC_THRESHOLD_INFO = DEFAULT_ALERT_CONFIG.gcThresholdInfo
 const DEFAULT_GC_THRESHOLD_WARNING = DEFAULT_ALERT_CONFIG.gcThresholdWarning
 const DEFAULT_GC_THRESHOLD_ERROR = DEFAULT_ALERT_CONFIG.gcThresholdError
 const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = DEFAULT_ALERT_CONFIG.memGrowthAlertPerMin
+
+// Session-footprint (disk) polling interval. Deliberately NOT a member of
+// DEFAULT_ALERT_CONFIG: test/defaults-drift.test.ts asserts that object contains
+// EXACTLY the 10 memory/GC keys, and a footprint key here would break that
+// precise set. Disk scans are comparatively expensive (recursive readdir +
+// stat over every session directory), so they run far less often than memory.
+// The host caches the last scan and the client reads the cached snapshot, so
+// the route itself never triggers an on-demand scan.
+const FOOTPRINT_POLL_INTERVAL_MS = 300000  // 5 min
 
 /**
  * Sentinel passed to `query()` / `gcEvents()` as the `since` lower bound to
@@ -435,6 +453,211 @@ function stopTrend(ctx: Context): void {
   _memoryTrend?.stop()
 }
 
+// ── Session-footprint collector ─────────────────────────────────────────
+//
+// Answers "how big is my session footprint?" — total session count, archived
+// session count, and on-disk usage under <DSH_HOME>/sessions. The data is
+// structural (directory listings + sizes), not high-frequency, and a recursive
+// scan is comparatively expensive, so this runs on its own slow cadence and
+// caches the latest snapshot for the HTTP route to serve on demand.
+//
+// The count of ARCHIVED sessions comes from the DSH runtime's
+// workspaceRegistry.archivedSessionIds (the same truth the workspace manager
+// uses) intersected with the on-disk session directories: an id counts as an
+// archived session only if its directory still exists. This keeps the number
+// faithful to the runtime even if some archived sessions were pruned from disk.
+//
+// Ownership follows the MemoryTrendCollector singleton pattern (idempotent
+// start/stopGuarded start/stop, single owner) so overlapping apply/dispose
+// cycles cannot double-scan or kill a live collector prematurely.
+
+export interface FootprintWorkspace {
+  workspace: string            // directory name (slug form)
+  totalSessions: number
+  archivedSessions: number
+  bytes: number                // on-disk bytes for this workspace's sessions
+}
+export interface SessionFootprint {
+  totalSessions: number
+  archivedSessions: number
+  bytes: number                // total on-disk bytes across all workspaces
+  workspaces: FootprintWorkspace[]
+  scannedAt: number            // unix ms of the last successful scan (0 if none)
+}
+
+class SessionFootprintCollector {
+  private _snapshot: SessionFootprint | null = null
+  private _timer: ReturnType<typeof setTimeout> | null = null
+  private _running = false
+
+  start(): void {
+    if (this._running) return
+    this._running = true
+    this._scan().then(() => { this._schedule() }).catch(() => { this._schedule() })
+  }
+
+  stop(): void {
+    this._running = false
+    if (this._timer) {
+      clearTimeout(this._timer)
+      this._timer = null
+    }
+  }
+
+  /** Immediately trigger a re-scan (e.g. right after the workspace registry is
+   *  captured) so the very first archived count is not stuck at 0. */
+  rescan(): void {
+    if (!this._running) return
+    this._scan().catch(() => { /* keep last snapshot */ })
+  }
+
+  snapshot(): SessionFootprint | null {
+    return this._snapshot
+  }
+
+  private _schedule(): void {
+    if (!this._running) return
+    this._timer = setTimeout(() => {
+      this._timer = null
+      this._scan().then(() => { this._schedule() }).catch(() => { this._schedule() })
+    }, FOOTPRINT_POLL_INTERVAL_MS)
+    this._timer.unref?.()
+  }
+
+  private async _scan(): Promise<void> {
+    const sessionsRoot = resolveSessionsRoot()
+
+    const workspaces = await this._scanWorkspaces(sessionsRoot)
+    const snapshot: SessionFootprint = {
+      totalSessions: 0,
+      archivedSessions: 0,
+      bytes: 0,
+      workspaces,
+      scannedAt: Date.now(),
+    }
+    for (const w of workspaces) {
+      snapshot.totalSessions += w.totalSessions
+      snapshot.archivedSessions += w.archivedSessions
+      snapshot.bytes += w.bytes
+    }
+    this._snapshot = snapshot
+  }
+
+  private async _scanWorkspaces(sessionsRoot: string): Promise<FootprintWorkspace[]> {
+    let workspaceDirs: string[] = []
+    try {
+      workspaceDirs = await readdir(sessionsRoot, { withFileTypes: true }).then(
+        (ents) => ents.filter((e) => e.isDirectory()).map((e) => e.name),
+      )
+    } catch (_e) {
+      return []
+    }
+    const registry = getWorkspaceRegistry()
+    let archivedIds: string[] = []
+    try {
+      if (registry && typeof registry.archivedSessionIds === 'function') archivedIds = registry.archivedSessionIds()
+      else if (registry && Array.isArray((registry as any).archivedSessionIds)) archivedIds = (registry as any).archivedSessionIds as string[]
+    } catch (_e) { /* keep empty */ }
+
+    const result: FootprintWorkspace[] = []
+    for (const ws of workspaceDirs) {
+      const wsPath = join(sessionsRoot, ws)
+      let sessionNames: string[] = []
+      try {
+        sessionNames = await readdir(wsPath, { withFileTypes: true }).then(
+          (ents) => ents.filter((e) => e.isDirectory() && /^session-/.test(e.name)).map((e) => e.name),
+        )
+      } catch (_e) {
+        sessionNames = []
+      }
+      const namesSet = new Set(sessionNames)
+      let bytes = 0
+      for (const s of sessionNames) {
+        bytes += await dirSize(join(wsPath, s))
+      }
+      result.push({
+        workspace: ws,
+        totalSessions: sessionNames.length,
+        archivedSessions: countArchivedSessions(archivedIds, namesSet),
+        bytes,
+      })
+    }
+    return result
+  }
+}
+
+/** Recursively sum the on-disk size of a session directory. */
+async function dirSize(dir: string): Promise<number> {
+  let total = 0
+  let entries: import('node:fs').Dirent[] = []
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (_e) {
+    return 0
+  }
+  for (const e of entries) {
+    const p = join(dir, e.name)
+    try {
+      if (e.isDirectory()) {
+        total += await dirSize(p)
+      } else if (e.isSymbolicLink()) {
+        continue
+      } else {
+        const s = await stat(p)
+        total += s.size
+      }
+    } catch (_e) { /* skip */ }
+  }
+  return total
+}
+
+/**
+ * Resolve the DSH sessions root the same way the harness seeds `$DSH_HOME`:
+ * configured override > `$DSH_HOME` env > `~/.dsh` (opened home). `$DSH_HOME`
+ * may itself contain a `~` or trailing slashes, so expand the home and join the
+ * well-known `sessions` sub-directory explicitly. Returns `''` if a home could
+ * not be resolved at all (the scan then simply reports zero workspaces).
+ */
+function resolveSessionsRoot(): string {
+  const env = process.env.DSH_HOME
+  const home = env && env.trim()
+    ? env.replace(/^~(?=\/|\\)/, homedir())
+    : join(homedir(), '.dsh')
+  return join(home, 'sessions')
+}
+
+let _footprint: SessionFootprintCollector | null = null
+let _footprintOwner: Context | null = null
+
+// Cached reference to the DSH workspace-registry service, resolved lazily via
+// ctx.inject. When it is unavailable (or the plugin was applied without it),
+// archived-session counting degrades to whatever the registry can provide —
+// if the registry is truly absent the archived count is reported as 0 rather
+// than guessing from the disk (disk directories carry no archive flag).
+let _workspaceRegistry: any = null
+
+function setWorkspaceRegistry(wsCtx: Context): void {
+  const reg = (wsCtx as any)?.workspaceRegistry
+  if (reg != null) _workspaceRegistry = reg
+}
+
+function getWorkspaceRegistry(): any {
+  return _workspaceRegistry ?? null
+}
+
+function startFootprint(ctx: Context): void {
+  if (_footprintOwner && _footprintOwner !== ctx) return
+  if (!_footprint) _footprint = new SessionFootprintCollector()
+  _footprintOwner = ctx
+  _footprint.start()
+}
+
+function stopFootprint(ctx: Context): void {
+  if (_footprintOwner !== ctx) return
+  _footprintOwner = null
+  _footprint?.stop()
+}
+
 // ── Private HTTP helpers ────────────────────────────────────────────────
 
 /** Send a JSON response with no-store cache control. */
@@ -452,6 +675,28 @@ export function apply(ctx: Context, config: MemMonConfig) {
   ctx.inject(['settings'], (settingsCtx) => {
     settingsCtx.effect(() => settingsCtx.settings.configure({ auto: false }, ctx.fiber))
   })
+
+  // ── Workspace-registry capture ───────────────────────────────────────
+  // Grab the runtime's archived-session id list so the footprint collector can
+  // intersect it with on-disk session dirs. The registry is injected lazily;
+  // if it is unavailable at apply-time the footprint still scans the disk (and
+  // simply reports the archived count from whatever the registry later yields,
+  // or 0 if it never appears).
+  ctx.inject(['workspaceRegistry'], (regCtx: Context) => {
+    setWorkspaceRegistry(regCtx)
+    // The registry may arrive after the collector's first scan already ran
+    // with no archived ids → refresh it immediately so the count is correct.
+    _footprint?.rescan()
+  })
+
+  // ── Session-footprint collector bootstrap ────────────────────────────
+  // Low-frequency disk scan (5-minute cadence by default), cached on the host.
+  // Owned exclusively by this ctx; overlapping apply/dispose cycles are safe.
+  startFootprint(ctx)
+  ctx.effect(() => {
+    const owner = ctx
+    return () => { stopFootprint(owner) }
+  }, 'dsh-flash-mem-mon: session-footprint collector lifecycle')
 
   // ── Memory trend collector bootstrap ──────────────────────────────────
   // One bounded ring buffer per process, owned exclusively by the active ctx.
@@ -519,6 +764,34 @@ export function apply(ctx: Context, config: MemMonConfig) {
         }
       },
     }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/memory-trend')
+
+    // GET /plugins/dsh-flash-mem-mon/session-footprint
+    // Returns the host's cached session-footprint snapshot (total / archived
+    // session counts + per-workspace and total on-disk bytes). Serves only the
+    // cached result of the low-frequency disk scan — never triggers a scan on
+    // demand, so repeated client polls (or a reload while the modal is open)
+    // cannot hammer the filesystem. `scannedAt` is the unix-ms time of the last
+    // completed scan (0 before the first scan finishes).
+    wsCtx.effect(() => ws.register({
+      kind: 'exact',
+      path: '/plugins/dsh-flash-mem-mon/session-footprint',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          res.setHeader('allow', 'GET')
+          res.end()
+          return
+        }
+        const snap = _footprint?.snapshot() ?? null
+        sendJson(res, 200, snap ?? {
+          totalSessions: 0,
+          archivedSessions: 0,
+          bytes: 0,
+          workspaces: [],
+          scannedAt: 0,
+        })
+      },
+    }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/session-footprint')
 
     // POST /plugins/dsh-flash-mem-mon/dump-heap
     // Triggered by the "立即转储堆快照" disposal button attached to a memory

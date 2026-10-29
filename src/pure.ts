@@ -40,7 +40,7 @@ export const DEFAULT_ALERT_CONFIG: AlertDefaults = {
   memThresholdWarning: 512,
   memThresholdError: 1024,
   memThresholdCritical: 1536,
-  memPollBase: 30000,
+  memPollBase: 60000,
   memPollMin: 2000,
   gcThresholdInfo: 2,
   gcThresholdWarning: 5,
@@ -100,4 +100,58 @@ export function rssSlopePerMin(
   const avgIntervalMs = tailSpanMs / (n - 1)
   const samplesPerMinute = 60000 / avgIntervalMs
   return Math.round((slope * samplesPerMinute / 1048576) * 100) / 100
+}
+
+// ── Session-footprint helpers ─────────────────────────────────────────────
+// These are derived purely from collected inputs so the aggregate math and the
+// human-readable formatting can be unit tested without touching the filesystem.
+
+/**
+ * Derive the number of ARCHIVED sessions that are still physically present on
+ * disk. The DSH runtime's `workspaceRegistry.archivedSessionIds` lists archived
+ * session ids, but some may have already been pruned from disk (so the disk
+ * `sessions/<workspace>/session-<uuid>` directories can be fewer than the ids).
+ * The truth source for "archived" is the runtime id list; the disk constrains
+ * it to what still exists. Pass `sessionNames` as the on-disk directory names
+ * (e.g. `new Set(['session-a', 'session-b', ...])`).
+ */
+export function countArchivedSessions(
+  archivedIds: readonly string[],
+  sessionNames: ReadonlySet<string>,
+): number {
+  let count = 0
+  for (const id of archivedIds) {
+    if (sessionNames.has(id) || sessionNames.has(`session-${id}`)) count++
+  }
+  return count
+}
+
+/** Format a byte count for display, e.g. 1536 → '1.5 KB', 7340032 → '7.0 MB'. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(1)} ${units[unit]}`
+}
+
+/** Format a duration (ms) as a human freshness string, e.g. '5 分钟前'. */
+export function formatDurationAgo(nowMs: number, thenMs: number): string | null {
+  if (!Number.isFinite(nowMs) || !Number.isFinite(thenMs) || thenMs <= 0 || nowMs < thenMs) return null
+  const sec = Math.floor((nowMs - thenMs) / 1000)
+  if (sec < 60) return sec <= 1 ? '刚刚' : `${sec} 秒前`
+  if (sec < 3600) return `${Math.floor(sec / 60)} 分钟前`
+  return `${Math.floor(sec / 3600)} 小时前`
+}
+
+/** Sum an array of byte counts (per-workspace disk usage) into a single total. */
+export function sumBytes(parts: readonly number[]): number {
+  let total = 0
+  for (const p of parts) total += p
+  return total
 }
