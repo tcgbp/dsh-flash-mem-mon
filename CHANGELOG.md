@@ -9,13 +9,21 @@ registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate
 Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend`
 for the trend sparklines shown in the panel.
 
-## Unreleased
+## 0.2.0
 
-**Alert 处置按钮：立即转储堆快照。** 用上核心 `dsh-flash` 告警面板注册处置按钮的能力（告警对象上的 `actions` 数组 → 每条渲染一个按钮，`onClick(alert, api)` 执行期间按钮置灰，返回 `{message}` 保持详情面板打开）。内存/T GC 告警卡片（`host-mem-*`、`host-mem-growth`、`host-gc-*`）都挂载了同一个「立即转储堆快照」处置按钮：
+**两个新功能 + 一处修复。**
+
+**新功能：Alert 处置按钮——立即转储堆快照。** 用上核心 `dsh-flash` 告警面板注册处置按钮的能力（告警对象上的 `actions` 数组 → 每条渲染一个按钮，`onClick(alert, api)` 执行期间按钮置灰，返回 `{message}` 保持详情面板打开）。内存/GC 告警卡片（`host-mem-*`、`host-mem-growth`、`host-gc-*`）都挂载了同一个「立即转储堆快照」处置按钮：
 
 - 点按后客户端 `POST /plugins/dsh-flash-mem-mon/dump-heap`；
 - 宿主端 `v8.writeHeapSnapshot()` 同步写入 OS 临时目录（仅用户主动触发时才允许阻塞主线，绝不自动转储），记录最近一次快照并返回 `{name,size}`；
 - 客户端借 `GET /plugins/dsh-flash-mem-mon/heap-dump` 以附件形式流式下载 `.heapsnapshot`，把保存路径回显在按钮行状态里，保持详情面板打开以便用户读取。
+
+**新功能：会话足迹（内存/磁盘）统计。** 在监控面板新增低频会话足迹统计（内存/磁盘），用于量化"积累的会话对性能/空间的影响"。
+
+**修复：** 修复 Full GC 内存归属重复统计与事件列表乱序（`fix: prevent duplicate Full GC memory attribution and out-of-order event list`）。
+
+**杂项：** 插件界面显示名由「内存监控 / Memory Monitor」改为「性能监控 / Performance Monitor」（包名 `dsh-flash-mem-mon` 及配置键、路由不变）。
 
 ## 0.1.7
 
