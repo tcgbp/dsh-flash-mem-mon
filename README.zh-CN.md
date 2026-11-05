@@ -1,6 +1,6 @@
 # dsh-flash-mem-mon
 
-dsh-flash 的内存监控提供器 — 通过 `ctx.get('dockFlashAlerts')` 注册主机内存告警提供器（RSS 绝对阈值、RSS 增长率、Major GC 频率），并暴露 `/memory-trend` 路由用于趋势图。
+dsh-flash 的性能监控提供器 — 通过 `ctx.get('dockFlashAlerts')` 注册主机性能告警提供器（RSS 绝对阈值、RSS 增长率、Major GC 频率），并暴露 `/memory-trend` 路由用于趋势图。
 
 ## 安装
 
