@@ -4,6 +4,9 @@
   "description": "Memory monitor provider for the `dsh-flash` Quick Control panel — registers a host-memory-alert provider (RSS absolute, RSS growth rate, Major GC frequency) via ctx.get('dockFlashAlerts') and exposes /memory-trend for trend sparklines.",
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "dsh": ">=0.2.1-rc.1 <0.3.0"
+  },
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js",
