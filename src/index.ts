@@ -74,14 +74,12 @@ const DEFAULT_MEM_THRESHOLD_ERROR = DEFAULT_ALERT_CONFIG.memThresholdError
 const DEFAULT_MEM_THRESHOLD_CRITICAL = DEFAULT_ALERT_CONFIG.memThresholdCritical
 const DEFAULT_MEM_POLL_BASE = DEFAULT_ALERT_CONFIG.memPollBase
 const DEFAULT_MEM_POLL_MIN = DEFAULT_ALERT_CONFIG.memPollMin
-const DEFAULT_GC_THRESHOLD_INFO = DEFAULT_ALERT_CONFIG.gcThresholdInfo
-const DEFAULT_GC_THRESHOLD_WARNING = DEFAULT_ALERT_CONFIG.gcThresholdWarning
-const DEFAULT_GC_THRESHOLD_ERROR = DEFAULT_ALERT_CONFIG.gcThresholdError
+const DEFAULT_GC_THRESHOLD = DEFAULT_ALERT_CONFIG.gcThreshold
 const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = DEFAULT_ALERT_CONFIG.memGrowthAlertPerMin
 
 // Session-footprint (disk) polling interval. Deliberately NOT a member of
 // DEFAULT_ALERT_CONFIG: test/defaults-drift.test.ts asserts that object contains
-// EXACTLY the 10 memory/GC keys, and a footprint key here would break that
+// EXACTLY the 8 memory/GC keys, and a footprint key here would break that
 // precise set. Disk scans are comparatively expensive (recursive readdir +
 // stat over every session directory), so they run far less often than memory.
 // The host caches the last scan and the client reads the cached snapshot, so
@@ -105,9 +103,7 @@ export interface MemMonConfig {
   memThresholdCritical: Volatile<number>
   memPollBase: Volatile<number>
   memPollMin: Volatile<number>
-  gcThresholdInfo: Volatile<number>
-  gcThresholdWarning: Volatile<number>
-  gcThresholdError: Volatile<number>
+  gcThreshold: Volatile<number>
   memGrowthAlertPerMin: Volatile<number>
 }
 
@@ -118,9 +114,7 @@ export const Config = Schema.object({
   memThresholdCritical: Schema.number().default(DEFAULT_MEM_THRESHOLD_CRITICAL).volatile(),
   memPollBase: Schema.number().default(DEFAULT_MEM_POLL_BASE).volatile(),
   memPollMin: Schema.number().default(DEFAULT_MEM_POLL_MIN).volatile(),
-  gcThresholdInfo: Schema.number().default(DEFAULT_GC_THRESHOLD_INFO).volatile(),
-  gcThresholdWarning: Schema.number().default(DEFAULT_GC_THRESHOLD_WARNING).volatile(),
-  gcThresholdError: Schema.number().default(DEFAULT_GC_THRESHOLD_ERROR).volatile(),
+  gcThreshold: Schema.number().default(DEFAULT_GC_THRESHOLD).volatile(),
   memGrowthAlertPerMin: Schema.number().default(DEFAULT_MEM_GROWTH_ALERT_PER_MIN).volatile(),
 })
 

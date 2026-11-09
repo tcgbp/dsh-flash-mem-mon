@@ -22,9 +22,7 @@ dsh plugin --profile <profile> add dsh-flash-mem-mon
 | `memThresholdCritical` | 1536 MB | RSS 严重阈值 |
 | `memPollBase` | 30000 ms | 基础轮询间隔 |
 | `memPollMin` | 2000 ms | 最小轮询间隔 |
-| `gcThresholdInfo` | 2 /min | Major GC 信息阈值 |
-| `gcThresholdWarning` | 5 /min | Major GC 警告阈值 |
-| `gcThresholdError` | 10 /min | Major GC 错误阈值 |
+| `gcThreshold` | 0.5 /min | Major GC 频率告警阈值（最近 5 分钟事件/分钟）；作为 RSS 尚未告警前的提前预警，RSS（绝对值或增长率）告警有效时自动抑制。设为 0 关闭 |
 
 ## 架构
 

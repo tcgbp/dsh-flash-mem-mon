@@ -8,9 +8,7 @@ export const DEFAULT_ALERT_CONFIG = {
     memThresholdCritical: 1536,
     memPollBase: 60000,
     memPollMin: 2000,
-    gcThresholdInfo: 2,
-    gcThresholdWarning: 5,
-    gcThresholdError: 10,
+    gcThreshold: 0.5,
     memGrowthAlertPerMin: 1,
 };
 /**

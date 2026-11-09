@@ -22,9 +22,7 @@ All settings are live-editable (volatile) and take effect immediately:
 | `memThresholdCritical` | 1536 MB | RSS critical threshold |
 | `memPollBase` | 30000 ms | Base polling interval |
 | `memPollMin` | 2000 ms | Minimum polling interval |
-| `gcThresholdInfo` | 2 /min | Major GC info threshold |
-| `gcThresholdWarning` | 5 /min | Major GC warning threshold |
-| `gcThresholdError` | 10 /min | Major GC error threshold |
+| `gcThreshold` | 0.5 /min | Major GC frequency alert threshold (events/min over the last 5 min); an early warning that is suppressed while an RSS (absolute or growth) alert is active. Set 0 to disable |
 | `memGrowthAlertPerMin` | 1 MB/min | RSS growth-rate (linear-regression slope) alert threshold, applied with trend = up |
 
 ## Architecture
