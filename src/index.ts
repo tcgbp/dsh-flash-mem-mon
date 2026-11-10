@@ -24,7 +24,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type { Volatile } from '@deepseek-ai/cordis'
 import { writeHeapSnapshot } from 'node:v8'
 import { createReadStream } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 // Default export only (`export default Schema`); there is no named `Schema`.
@@ -757,7 +757,17 @@ export function apply(ctx: Context, config: MemMonConfig) {
             gcEvents: majorGcEvents,
           })
         } else {
-          sendJson(res, 200, _memoryTrend.summary(since))
+          // Attach the cached archived-session count so the client's alert
+          // poll can decide whether to surface the "clean up archived
+          // sessions" button (only when archived count > 30 AND RSS is at
+          // warning level or above). -1 means the footprint is not known
+          // yet (first disk scan not finished), which never qualifies.
+          const summary = _memoryTrend.summary(since)
+          const fpSnap = _footprint?.snapshot?.() ?? null
+          const archived = fpSnap && Number.isFinite(fpSnap.archivedSessions)
+            ? fpSnap.archivedSessions
+            : -1
+          sendJson(res, 200, Object.assign({}, summary, { archivedSessions: archived }))
         }
       },
     }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/memory-trend')
@@ -789,6 +799,88 @@ export function apply(ctx: Context, config: MemMonConfig) {
         })
       },
     }), 'dsh-flash-mem-mon: GET /plugins/dsh-flash-mem-mon/session-footprint')
+
+    // POST /plugins/dsh-flash-mem-mon/session-footprint/cleanup
+    // Triggered by the "清理归档会话" button in the memory monitor config modal
+    // (shown only when archived sessions > 30 AND RSS >= warning). Physically
+    // removes the on-disk `sessions/<workspace>/session-<id>` directories that
+    // correspond to currently archived sessions so their footprint is freed,
+    // then unarchives those ids in the registry (their data no longer exists)
+    // and re-scans the footprint so the panel's counts/bytes refresh. Only
+    // directories whose basename matches `session-*` and whose id is in the
+    // trusted archived set are touched — never arbitrary paths. Responses:
+    //   { removed: n }        on success
+    //   { removed: 0 }        when nothing is archived / on disk
+    wsCtx.effect(() => ws.register({
+      kind: 'exact',
+      path: '/plugins/dsh-flash-mem-mon/session-footprint/cleanup',
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const registry = getWorkspaceRegistry()
+        if (!registry) {
+          sendJson(res, 200, { removed: 0 })
+          return
+        }
+        let archivedIds: string[] = []
+        try {
+          if (typeof registry.archivedSessionIds === 'function') archivedIds = registry.archivedSessionIds()
+          else if (Array.isArray(registry.archivedSessionIds)) archivedIds = registry.archivedSessionIds as string[]
+        } catch (_e) { /* keep empty */ }
+
+        const sessionsRoot = resolveSessionsRoot()
+        let removed = 0
+        if (archivedIds.length > 0 && sessionsRoot) {
+          const archivedSet = new Set(archivedIds)
+          let workspaceDirs: string[] = []
+          try {
+            workspaceDirs = await readdir(sessionsRoot, { withFileTypes: true }).then(
+              (ents) => ents.filter((e) => e.isDirectory()).map((e) => e.name),
+            )
+          } catch (_e) { workspaceDirs = [] }
+          const candidates: string[] = []
+          for (const ws of workspaceDirs) {
+            let sessionNames: string[] = []
+            try {
+              const wsPath = join(sessionsRoot, ws)
+              sessionNames = await readdir(wsPath, { withFileTypes: true }).then(
+                (ents) => ents.filter((e) => e.isDirectory() && /^session-/.test(e.name)).map((e) => e.name),
+              )
+            } catch (_e) { sessionNames = [] }
+            for (const dirName of sessionNames) {
+              const isArchived =
+                archivedSet.has(dirName) || archivedSet.has(dirName.replace(/^session-/, ''))
+              if (isArchived) candidates.push(join(sessionsRoot, ws, dirName))
+            }
+          }
+          for (const dir of candidates) {
+            try {
+              // Only ever remove a concrete session directory we already
+              // confirmed to be archived and physically present.
+              await rm(dir, { recursive: true, force: true })
+              removed++
+            } catch (_e) { /* skip a stubborn dir; still count the rest */ }
+          }
+        }
+
+        // Drop the deleted ids from the archive set so no dangling metadata
+        // points at data that no longer exists. Best-effort per id.
+        if (archivedIds.length > 0 && registry && typeof registry.unarchiveSession === 'function') {
+          for (const id of archivedIds) {
+            try { await registry.unarchiveSession(id) } catch (_e) { /* best-effort */ }
+          }
+        }
+
+        // Refresh the panel's cached counts/bytes now that disk changed.
+        await _footprint?.rescan?.()
+
+        sendJson(res, 200, { removed })
+      },
+    }), 'dsh-flash-mem-mon: POST /plugins/dsh-flash-mem-mon/session-footprint/cleanup')
 
     // POST /plugins/dsh-flash-mem-mon/dump-heap
     // Triggered by the "立即转储堆快照" disposal button attached to a memory
