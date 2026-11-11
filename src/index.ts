@@ -25,7 +25,7 @@ import type { Volatile } from '@deepseek-ai/cordis'
 import { writeHeapSnapshot } from 'node:v8'
 import { createReadStream } from 'node:fs'
 import { readdir, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 // Default export only (`export default Schema`); there is no named `Schema`.
 import Schema from '@deepseek-ai/schemastery'
@@ -76,6 +76,7 @@ const DEFAULT_MEM_POLL_BASE = DEFAULT_ALERT_CONFIG.memPollBase
 const DEFAULT_MEM_POLL_MIN = DEFAULT_ALERT_CONFIG.memPollMin
 const DEFAULT_GC_THRESHOLD = DEFAULT_ALERT_CONFIG.gcThreshold
 const DEFAULT_MEM_GROWTH_ALERT_PER_MIN = DEFAULT_ALERT_CONFIG.memGrowthAlertPerMin
+const DEFAULT_ARCHIVED_CLEANUP_THRESHOLD = DEFAULT_ALERT_CONFIG.archivedCleanupThreshold
 
 // Session-footprint (disk) polling interval. Deliberately NOT a member of
 // DEFAULT_ALERT_CONFIG: test/defaults-drift.test.ts asserts that object contains
@@ -105,6 +106,7 @@ export interface MemMonConfig {
   memPollMin: Volatile<number>
   gcThreshold: Volatile<number>
   memGrowthAlertPerMin: Volatile<number>
+  archivedCleanupThreshold: Volatile<number>
 }
 
 export const Config = Schema.object({
@@ -116,6 +118,7 @@ export const Config = Schema.object({
   memPollMin: Schema.number().default(DEFAULT_MEM_POLL_MIN).volatile(),
   gcThreshold: Schema.number().default(DEFAULT_GC_THRESHOLD).volatile(),
   memGrowthAlertPerMin: Schema.number().default(DEFAULT_MEM_GROWTH_ALERT_PER_MIN).volatile(),
+  archivedCleanupThreshold: Schema.number().default(DEFAULT_ARCHIVED_CLEANUP_THRESHOLD).volatile(),
 })
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -834,6 +837,7 @@ export function apply(ctx: Context, config: MemMonConfig) {
 
         const sessionsRoot = resolveSessionsRoot()
         let removed = 0
+        const removedSessionIds = new Set<string>()
         if (archivedIds.length > 0 && sessionsRoot) {
           const archivedSet = new Set(archivedIds)
           let workspaceDirs: string[] = []
@@ -863,6 +867,11 @@ export function apply(ctx: Context, config: MemMonConfig) {
               // confirmed to be archived and physically present.
               await rm(dir, { recursive: true, force: true })
               removed++
+              // Remember which archived session this directory belonged to so we
+              // can detach it below — the on-disk dir name may carry a
+              // "session-" prefix while the registry id does not.
+              const base = basename(dir)
+              removedSessionIds.add(base.replace(/^session-/, ''))
             } catch (_e) { /* skip a stubborn dir; still count the rest */ }
           }
         }
@@ -873,6 +882,26 @@ export function apply(ctx: Context, config: MemMonConfig) {
           for (const id of archivedIds) {
             try { await registry.unarchiveSession(id) } catch (_e) { /* best-effort */ }
           }
+        }
+
+        // Detach the physically-removed sessions from every workspace entity so
+        // the live session lists stop projecting data that no longer exists.
+        // detachSession() on a missing session is a no-op, so it is safe to call
+        // for ids that were archived but whose directory removal already failed.
+        // The registry mutate emits a change event, which is what drives the
+        // frontend to refresh and drop the now-deleted sessions (Requirement 2).
+        if (removedSessionIds.size > 0 && registry && typeof registry.list === 'function') {
+          try {
+            const entities = registry.list() ?? []
+            for (const entity of entities) {
+              const sessionIds = (entity && entity.sessionIds) || []
+              for (const sid of sessionIds) {
+                if (removedSessionIds.has(sid) && typeof entity.detachSession === 'function') {
+                  try { await entity.detachSession(sid) } catch (_e) { /* best-effort */ }
+                }
+              }
+            }
+          } catch (_e) { /* best-effort: never let registry failures break cleanup */ }
         }
 
         // Refresh the panel's cached counts/bytes now that disk changed.

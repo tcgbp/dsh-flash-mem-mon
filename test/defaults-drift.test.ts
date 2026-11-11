@@ -62,6 +62,7 @@ test('client _MEM_ALERT_DEFAULTS matches the canonical host DEFAULT_ALERT_CONFIG
 test('DEFAULT_ALERT_CONFIG has exactly the expected keys', () => {
   const keys = Object.keys(DEFAULT_ALERT_CONFIG).sort()
   assert.deepEqual(keys, [
+    'archivedCleanupThreshold',
     'gcThreshold',
     'memGrowthAlertPerMin',
     'memPollBase',

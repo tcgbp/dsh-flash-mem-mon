@@ -10,6 +10,7 @@ export const DEFAULT_ALERT_CONFIG = {
     memPollMin: 2000,
     gcThreshold: 0.5,
     memGrowthAlertPerMin: 1,
+    archivedCleanupThreshold: 30,
 };
 /**
  * Classify a V8 GC `kind` bitmask as a full (major) cycle.

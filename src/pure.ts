@@ -31,6 +31,7 @@ export interface AlertDefaults {
   memPollMin: number
   gcThreshold: number
   memGrowthAlertPerMin: number
+  archivedCleanupThreshold: number
 }
 
 export const DEFAULT_ALERT_CONFIG: AlertDefaults = {
@@ -42,6 +43,7 @@ export const DEFAULT_ALERT_CONFIG: AlertDefaults = {
   memPollMin: 2000,
   gcThreshold: 0.5,
   memGrowthAlertPerMin: 1,
+  archivedCleanupThreshold: 30,
 }
 
 /**
