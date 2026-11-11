@@ -1,6 +1,6 @@
 # dsh-flash-mem-mon
 
-Performance monitor provider for [dsh-flash](https://github.com/tcgbp/dsh-flash) — registers a host-performance-alert provider (RSS absolute thresholds, RSS growth rate, Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend` for trend sparklines.
+Performance monitor provider for [dsh-flash](https://github.com/tcgbp/dsh-flash) — registers a host-performance-alert provider (RSS absolute thresholds, RSS growth rate, Major GC frequency) via `ctx.get('dshFlashAlerts')` and exposes `/memory-trend` for trend sparklines.
 
 ## Installation
 
@@ -8,7 +8,7 @@ Performance monitor provider for [dsh-flash](https://github.com/tcgbp/dsh-flash)
 dsh plugin --profile <profile> add dsh-flash-mem-mon
 ```
 
-Requires `dsh-flash >=1.0.0` (provides `dockFlashAlerts` and `quickControl` services).
+Requires `dsh-flash >=1.0.0` (provides `dshFlashAlerts` and `quickControl` services).
 
 ## Configuration
 

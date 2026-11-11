@@ -50,7 +50,7 @@
 
 ### 4.2 运行时内存层面（机制 + 局限）
 - 每个**活动**会话会在宿主进程中保留对话上下文；上下文越长、并发会话越多，宿主 RSS / heap 占用越高，这是"会话数影响性能"的真正机制。
-- 本插件 `dsh-flash-mem-mon` 的 host 半正是用于观测这一点：它监控宿主进程 **RSS / heapUsed 绝对值、RSS 增长斜率（线性回归 MB/min）、Major GC 频率**，并通过 `ctx.get('dockFlashAlerts')` 暴露告警。
+- 本插件 `dsh-flash-mem-mon` 的 host 半正是用于观测这一点：它监控宿主进程 **RSS / heapUsed 绝对值、RSS 增长斜率（线性回归 MB/min）、Major GC 频率**，并通过 `ctx.get('dshFlashAlerts')` 暴露告警。
 - 若要让"会话数 → 内存影响"完全自动化，可在此基础上让 host 半追加一个会话足迹统计（见下节建议）。
 
 ## 五、本次运行时探测的局限
