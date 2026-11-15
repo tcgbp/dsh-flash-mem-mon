@@ -9,6 +9,19 @@ registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate
 Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend`
 for the trend sparklines shown in the panel.
 
+## 0.2.1
+
+**清理归档会话 + Full GC 趋势面板打磨。** 面向「堆积会话拖累性能」与「趋势信息可读性」的小版本：
+
+**新功能：清理归档会话按钮。** 阈值面板中新增「清理归档会话」按钮（`bb7e923`），一键清理已归档会话，并在前端刷新被删除的会话，量化对性能/空间的即时释放。
+
+**新功能：Full GC 阈值可配置。** Major GC 频率监测阈值由硬编码改为可配置项（`648067f`），统一收敛为单个 `gcThreshold` 配置（`a071efb`）。
+
+**修复与打磨：**
+- Full GC 记录 与 趋势信息 列等高布局；右列高度不超左列，内容溢出时显示滚动条（`fe33898`）；
+- 与核心 `dsh-flash` 的告警契约（flash contract）保持同步（`2d7077f`）；
+- 宿主约束（`engines.dsh`）收窄微调（`0187d33`）。
+
 ## 0.2.0
 
 **两个新功能 + 一处修复。**
