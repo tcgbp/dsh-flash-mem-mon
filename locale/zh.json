@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "内存监控",
+    "description": "`dsh-flash` 快捷控制面板的内存监控提供方 —— 通过 ctx.get('dshFlashAlerts') 注册宿主内存告警提供方（RSS 绝对值、RSS 增长率、Major GC 频率），并通过 /memory-trend 提供趋势迷你图。",
+    "detail": "README.zh-CN.md"
+  }
+}

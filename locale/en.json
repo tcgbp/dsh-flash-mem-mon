@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Memory Monitor",
+    "description": "Memory monitor provider for the `dsh-flash` Quick Control panel — registers a host-memory-alert provider (RSS absolute, RSS growth rate, Major GC frequency) via ctx.get('dshFlashAlerts') and exposes /memory-trend for trend sparklines.",
+    "detail": "README.md"
+  }
+}
