@@ -5,3 +5,9 @@ node_modules/
 # `pnpm pack` from the tagged commit and uploaded to a GitHub Release; a stale
 # one sitting in the tree is how a release ships the previous build.
 *.tgz
+
+# Mnemon memory store. Session-local, continuously mutated runtime state
+# (memories.json, generated MEMORY.md/USER.md projections, and the document
+# index/entities under documents/). Nothing here is a shared, versionable
+# project artifact, so it is never committed.
+.mnemon/
