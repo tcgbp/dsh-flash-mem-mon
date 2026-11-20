@@ -9,6 +9,13 @@ registers a host-memory-alert provider (RSS absolute thresholds, RSS growth rate
 Major GC frequency) via `ctx.get('dockFlashAlerts')` and exposes `/memory-trend`
 for the trend sparklines shown in the panel.
 
+## 0.2.2
+
+**归档清理阈值收敛 + 发布资源补齐。** 对 0.2.1 新增的「清理归档会话」功能做默认值/范围收窄，并把语言资源纳入发布：
+
+- **归档清理阈值默认值收敛为 20**，配置范围收窄为 10–100（步长 5），替换原先过宽的 0–500 与默认 30（`3e6ad93`）；`src/pure.ts`、`dist/pure.js`、`lib/client.js` 三处保持一致，无漂移。
+- **语言资源随包发布。** 新增 `locale/zh.json`、`locale/en.json`（插件清单 `meta`），并在 package 的 `exports` 暴露 `./locale/*.json`、将 `locale` 目录纳入发布清单（`3e6ad93`）。
+
 ## 0.2.1
 
 **清理归档会话 + Full GC 趋势面板打磨。** 面向「堆积会话拖累性能」与「趋势信息可读性」的小版本：
